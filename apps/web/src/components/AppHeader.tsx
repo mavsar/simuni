@@ -1,5 +1,5 @@
 import { CalendarCheck, Home, LogOut, Menu, ReceiptEuro, Settings, UserRound, X } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ComponentType, type SVGProps } from 'react';
 
 import { SimuniLogo } from './SimuniLogo';
 import { Button } from './ui/Button';
@@ -19,7 +19,7 @@ export type AppHeaderProps = {
 type NavItem = {
   value: AppHeaderTab;
   label: string;
-  Icon: React.ComponentType<{ size?: number; className?: string; 'aria-hidden'?: boolean }>;
+  Icon: ComponentType<SVGProps<SVGSVGElement> & { size?: number | string }>;
 };
 
 export function AppHeader({
