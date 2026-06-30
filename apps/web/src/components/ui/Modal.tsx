@@ -23,6 +23,9 @@ export function Modal({ open, onClose, title, children, footer, className }: Mod
   useEffect(() => {
     if (!open) return;
 
+    // Prevent body scroll while modal is open
+    document.body.style.overflow = 'hidden';
+
     function onKeyDown(event: KeyboardEvent) {
       if (event.key === 'Escape') {
         onClose();
@@ -30,14 +33,17 @@ export function Modal({ open, onClose, title, children, footer, className }: Mod
     }
 
     document.addEventListener('keydown', onKeyDown);
-    return () => document.removeEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+      document.body.style.overflow = '';
+    };
   }, [open, onClose]);
 
   if (!open) return null;
 
   return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-brand-dark/30 p-4 backdrop-blur-md"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-brand-dark/30 backdrop-blur-md"
       role="presentation"
       onClick={onClose}
     >
@@ -46,12 +52,16 @@ export function Modal({ open, onClose, title, children, footer, className }: Mod
         aria-modal="true"
         aria-label={title}
         className={cn(
-          'relative w-full max-w-md rounded-2xl bg-white/95 shadow-xl ring-1 ring-brand/10 backdrop-blur-sm',
+          // max-h keeps the dialog within the viewport; flex-col lets header/footer
+          // stay fixed while the body section scrolls independently.
+          'relative flex w-full max-w-md flex-col rounded-2xl bg-white/95 shadow-xl ring-1 ring-brand/10 backdrop-blur-sm',
+          'max-h-[calc(100dvh-2rem)]',
           className
         )}
         onClick={(event) => event.stopPropagation()}
       >
-        <div className="flex items-center justify-between gap-4 border-b border-brand/10 px-5 py-4">
+        {/* Header — always visible, never scrolls */}
+        <div className="flex shrink-0 items-center justify-between gap-4 border-b border-brand/10 px-5 py-4">
           {title ? (
             <h2 className="text-lg font-semibold text-brand-dark">{title}</h2>
           ) : (
@@ -68,10 +78,14 @@ export function Modal({ open, onClose, title, children, footer, className }: Mod
           />
         </div>
 
-        <div className="px-5 py-4">{children}</div>
+        {/* Body — scrolls when content is taller than available space.
+            min-h-0 overrides the flex default (min-height: auto) so the
+            element can actually shrink and let overflow-y-auto kick in. */}
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">{children}</div>
 
+        {/* Footer — always visible, never scrolls */}
         {footer && (
-          <div className="flex items-center justify-end gap-2 border-t border-brand/10 px-5 py-4">
+          <div className="flex shrink-0 items-center justify-end gap-2 border-t border-brand/10 px-5 py-4">
             {footer}
           </div>
         )}
