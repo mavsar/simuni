@@ -1219,24 +1219,6 @@ export function AvailabilityPage({
                 Bungalov
               </p>
 
-              {/* Pavšal summary */}
-              <div className="rounded-lg bg-white/60 px-3 py-2 text-xs">
-                <div className="flex justify-between text-brand/70">
-                  <span>Letni pavšal</span>
-                  <span>{formatEur(selectionEstimate.bungalovPausal)}</span>
-                </div>
-                {selectionEstimate.bungalovDiscountPercent > 0 && (
-                  <div className="flex justify-between text-brand/70">
-                    <span>Popust ({selectionEstimate.bungalovDiscountPercent} %)</span>
-                    <span>−{formatEur(selectionEstimate.bungalovDiscountAmount)}</span>
-                  </div>
-                )}
-                <div className="mt-1 flex justify-between border-t border-brand/10 pt-1 font-medium text-brand-dark">
-                  <span>Za pokriti skupaj</span>
-                  <span>{formatEur(selectionEstimate.bungalovDiscountedTotal)}</span>
-                </div>
-              </div>
-
               {/* Per-season bungalov breakdown */}
               {selectionEstimate.seasonGroups.map((group, i) => (
                 <div
@@ -1247,12 +1229,12 @@ export function AvailabilityPage({
                     <span className="font-medium text-brand-dark">
                       {group.seasonName ?? '(zunaj sezone)'}
                     </span>
-                    <span className="ml-2 text-brand/60">
-                      {group.days} {group.days === 1 ? 'dan' : 'dni'}
+                    <span className="ml-2 text-brand/50">
+                      {group.days} {group.days === 1 ? 'dan' : 'dni'} x {formatEur(group.bungalovTotal / group.days)}
                     </span>
                     {group.discountPercent > 0 && (
                       <span className="ml-2 text-brand/50">
-                        {group.discountPercent.toFixed(0)} % pop.
+                        ({group.discountPercent.toFixed(0)}% popusta)
                       </span>
                     )}
                     {group.avgFams > 1 && (
