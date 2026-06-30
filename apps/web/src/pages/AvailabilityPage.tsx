@@ -1,5 +1,6 @@
 import {
   Baby,
+  Car as CarIcon,
   ChevronDown,
   ChevronRight,
   Home,
@@ -38,7 +39,7 @@ import {
   seasonPriceForBand,
   type AgeBand
 } from '../lib/pricing';
-import type { Family, Person, Reservation, ReservationRangeInput, Settings } from '../lib/types';
+import type { Car, Family, Person, Reservation, ReservationRangeInput, Settings } from '../lib/types';
 import { useAuth } from '../state/AuthContext';
 
 const BAND_LABEL: Record<AgeBand, string> = {
@@ -266,6 +267,7 @@ export function AvailabilityPage({
   const [families, setFamilies] = useState<Family[]>([]);
   const [selectedUserId, setSelectedUserId] = useState<number>(currentUserId);
   const [selectedPersonIds, setSelectedPersonIds] = useState<number[]>([]);
+  const [selectedCarIds, setSelectedCarIds] = useState<number[]>([]);
 
   useEffect(() => {
     if (!isAdmin) return;
@@ -299,7 +301,14 @@ export function AvailabilityPage({
     return families.find((family) => family.id === familyId)?.persons ?? [];
   }
 
+  // Cars available to bring, for whichever family owns the booking.
+  function carsForFamily(familyId: number): Car[] {
+    if (familyId === currentUserId && user) return user.cars;
+    return families.find((family) => family.id === familyId)?.cars ?? [];
+  }
+
   const availablePersons = personsForFamily(selectedUserId);
+  const availableCars = carsForFamily(selectedUserId);
 
   // Admins manage every reservation; regular families only their own.
   const visibleReservations = useMemo(
@@ -504,6 +513,7 @@ export function AvailabilityPage({
     setRange(undefined);
     setSelectedUserId(currentUserId);
     setSelectedPersonIds(personsForFamily(currentUserId).map((person) => person.id));
+    setSelectedCarIds([]);
     setFormError(null);
     setModalOpen(true);
   }
@@ -516,6 +526,7 @@ export function AvailabilityPage({
     });
     setSelectedUserId(reservation.userId);
     setSelectedPersonIds(reservation.persons.map((person) => person.id));
+    setSelectedCarIds(reservation.cars.map((car) => car.id));
     setFormError(null);
     setModalOpen(true);
   }
@@ -524,11 +535,18 @@ export function AvailabilityPage({
     setSelectedUserId(familyId);
     // Default to the whole family attending when switching families.
     setSelectedPersonIds(personsForFamily(familyId).map((person) => person.id));
+    setSelectedCarIds([]);
   }
 
   function togglePerson(personId: number) {
     setSelectedPersonIds((prev) =>
       prev.includes(personId) ? prev.filter((id) => id !== personId) : [...prev, personId]
+    );
+  }
+
+  function toggleCar(carId: number) {
+    setSelectedCarIds((prev) =>
+      prev.includes(carId) ? prev.filter((id) => id !== carId) : [...prev, carId]
     );
   }
 
@@ -544,6 +562,7 @@ export function AvailabilityPage({
       startDay: toDayKey(range.from),
       endDay: toDayKey(end),
       personIds: selectedPersonIds,
+      carIds: selectedCarIds,
       ...(isAdmin ? { userId: selectedUserId } : {})
     };
 
@@ -831,6 +850,44 @@ export function AvailabilityPage({
                     )}
                     <span className="flex-1 truncate font-medium">{person.name}</span>
                     {age !== null && <span className="text-xs text-brand/50">{age} let</span>}
+                  </label>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        <div className="mb-4">
+          <span className="mb-1.5 block text-sm font-medium text-brand-dark">S katerimi avtomobili prihajate?</span>
+          {availableCars.length === 0 ? (
+            <p className="rounded-xl bg-sky/70 p-3 text-sm text-brand/70">
+              Ta družina še nima dodanih avtomobilov.
+            </p>
+          ) : (
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              {availableCars.map((car) => {
+                const checked = selectedCarIds.includes(car.id);
+                return (
+                  <label
+                    key={car.id}
+                    className={`flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-2 text-sm transition-colors ${
+                      checked
+                        ? 'border-brand bg-brand/5 text-brand-dark'
+                        : 'border-brand/15 bg-white text-brand-dark/80 hover:border-brand/30'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleCar(car.id)}
+                      disabled={saving}
+                      className="h-4 w-4 rounded border-brand/30 text-brand focus:ring-brand"
+                    />
+                    <CarIcon size={15} className="text-brand/70" aria-hidden />
+                    <span className="flex-1 truncate font-medium">{car.name}</span>
+                    {car.registrationPlate && (
+                      <span className="text-xs text-brand/50">{car.registrationPlate}</span>
+                    )}
                   </label>
                 );
               })}

@@ -176,6 +176,18 @@ const migrations: Migration[] = [
       ALTER TABLE persons ADD COLUMN id_type TEXT NOT NULL DEFAULT 'id_card';
       ALTER TABLE persons ADD COLUMN id_number TEXT NOT NULL DEFAULT '';
     `
+  },
+  {
+    name: "0010_reservation_cars",
+    sql: `
+      CREATE TABLE reservation_cars (
+        reservation_id INTEGER NOT NULL REFERENCES reservations(id) ON DELETE CASCADE,
+        car_id INTEGER NOT NULL REFERENCES cars(id) ON DELETE CASCADE,
+        PRIMARY KEY (reservation_id, car_id)
+      );
+
+      CREATE INDEX idx_reservation_cars_reservation ON reservation_cars (reservation_id);
+    `
   }
 ];
 

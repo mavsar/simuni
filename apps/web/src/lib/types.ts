@@ -46,6 +46,8 @@ export type Reservation = {
   ownerName: string;
   /** Family members attending this reservation. */
   persons: Person[];
+  /** Cars brought on this reservation. */
+  cars: Car[];
 };
 
 export type ReservationRangeInput = {
@@ -55,6 +57,8 @@ export type ReservationRangeInput = {
   userId?: number;
   /** Ids of the family members attending. */
   personIds: number[];
+  /** Ids of the cars coming on this reservation. */
+  carIds: number[];
 };
 
 export type Role = 'admin' | 'user';

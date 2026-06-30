@@ -25,6 +25,12 @@ type AttendeeRow = {
   id_number: string;
 };
 
+type CarRow = {
+  id: number;
+  name: string;
+  registration_plate: string;
+};
+
 const dayPattern = /^\d{4}-\d{2}-\d{2}$/;
 
 const selectAll = sqlite.prepare(
@@ -66,6 +72,23 @@ const selectFamilyPersonIds = sqlite.prepare(
   "SELECT id FROM persons WHERE family_id = ?"
 );
 
+const selectReservationCars = sqlite.prepare(
+  `SELECT c.id, c.name, c.registration_plate
+   FROM reservation_cars rc
+   JOIN cars c ON c.id = rc.car_id
+   WHERE rc.reservation_id = ?
+   ORDER BY c.id`
+);
+const insertReservationCar = sqlite.prepare(
+  "INSERT INTO reservation_cars (reservation_id, car_id) VALUES (?, ?)"
+);
+const deleteReservationCars = sqlite.prepare(
+  "DELETE FROM reservation_cars WHERE reservation_id = ?"
+);
+const selectFamilyCarIds = sqlite.prepare(
+  "SELECT id FROM cars WHERE family_id = ?"
+);
+
 function attendeesFor(reservationId: number) {
   return (selectAttendees.all(reservationId) as AttendeeRow[]).map((row) => ({
     id: row.id,
@@ -77,6 +100,14 @@ function attendeesFor(reservationId: number) {
   }));
 }
 
+function carsFor(reservationId: number) {
+  return (selectReservationCars.all(reservationId) as CarRow[]).map((row) => ({
+    id: row.id,
+    name: row.name,
+    registrationPlate: row.registration_plate
+  }));
+}
+
 function toDto(row: ReservationRow) {
   return {
     id: row.id,
@@ -84,7 +115,8 @@ function toDto(row: ReservationRow) {
     startDay: row.start_day,
     endDay: row.end_day,
     ownerName: row.family_name,
-    persons: attendeesFor(row.id)
+    persons: attendeesFor(row.id),
+    cars: carsFor(row.id)
   };
 }
 
@@ -101,10 +133,26 @@ function validPersonIds(familyId: number, personIds: number[]): number[] {
   return personIds.filter((id) => owned.has(id));
 }
 
+/** Keep only the car ids that actually belong to the owning family. */
+function validCarIds(familyId: number, carIds: number[]): number[] {
+  if (carIds.length === 0) return [];
+  const owned = new Set(
+    (selectFamilyCarIds.all(familyId) as Array<{ id: number }>).map((row) => row.id)
+  );
+  return carIds.filter((id) => owned.has(id));
+}
+
 function replaceAttendees(reservationId: number, personIds: number[]): void {
   deleteAttendees.run(reservationId);
   for (const personId of personIds) {
     insertAttendee.run(reservationId, personId);
+  }
+}
+
+function replaceReservationCars(reservationId: number, carIds: number[]): void {
+  deleteReservationCars.run(reservationId);
+  for (const carId of carIds) {
+    insertReservationCar.run(reservationId, carId);
   }
 }
 
@@ -115,7 +163,9 @@ const rangeSchema = z
     // Only honored for admins; lets them book on behalf of another family.
     userId: z.number().int().positive().optional(),
     // Which family members are coming on this reservation.
-    personIds: z.array(z.number().int().positive()).default([])
+    personIds: z.array(z.number().int().positive()).default([]),
+    // Which family cars are coming on this reservation.
+    carIds: z.array(z.number().int().positive()).default([])
   })
   .refine((value) => value.startDay <= value.endDay, {
     message: "Začetni dan mora biti pred ali enak končnemu."
@@ -150,6 +200,7 @@ reservationsRouter.post("/", (req, res) => {
   }
 
   const personIds = validPersonIds(ownerId, parsed.data.personIds);
+  const carIds = validCarIds(ownerId, parsed.data.carIds);
 
   const create = sqlite.transaction(() => {
     const info = insertReservation.run({
@@ -159,6 +210,7 @@ reservationsRouter.post("/", (req, res) => {
     });
     const reservationId = Number(info.lastInsertRowid);
     replaceAttendees(reservationId, personIds);
+    replaceReservationCars(reservationId, carIds);
     return reservationId;
   });
 
@@ -203,6 +255,7 @@ reservationsRouter.put("/:id", (req, res) => {
   }
 
   const personIds = validPersonIds(ownerId, parsed.data.personIds);
+  const carIds = validCarIds(ownerId, parsed.data.carIds);
 
   const update = sqlite.transaction(() => {
     updateReservation.run({
@@ -212,6 +265,7 @@ reservationsRouter.put("/:id", (req, res) => {
       endDay: parsed.data.endDay
     });
     replaceAttendees(id, personIds);
+    replaceReservationCars(id, carIds);
   });
 
   update();
