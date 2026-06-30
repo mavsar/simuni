@@ -15,7 +15,7 @@ type ButtonIcon = ComponentType<SVGProps<SVGSVGElement> & { size?: number | stri
  * The concrete classes for each combination live in `compoundVariants`.
  */
 const buttonVariants = cva(
-  'inline-flex items-center justify-center gap-2 font-semibold whitespace-nowrap outline-none transition-colors focus-visible:ring-2 focus-visible:ring-offset-0 disabled:cursor-not-allowed disabled:opacity-60',
+  'inline-flex items-center justify-center gap-2 font-semibold whitespace-nowrap outline-none transition-colors focus-visible:ring-2 focus-visible:ring-offset-0 disabled:cursor-not-allowed disabled:opacity-40 disabled:saturate-50',
   {
     variants: {
       variant: {
@@ -44,48 +44,47 @@ const buttonVariants = cva(
       {
         variant: 'full',
         color: 'brand',
-        class: 'bg-brand text-white hover:bg-brand-dark focus-visible:ring-brand/40',
+        class: 'bg-brand text-white enabled:hover:bg-brand-dark focus-visible:ring-brand/40',
       },
       {
         variant: 'full',
         color: 'sand',
-        class: 'bg-sand text-brand-dark hover:bg-sand/80 focus-visible:ring-brand/30',
+        class: 'bg-sand text-brand-dark enabled:hover:bg-sand/80 focus-visible:ring-brand/30',
       },
       {
         variant: 'full',
         color: 'danger',
-        class: 'bg-red-600 text-white hover:bg-red-700 focus-visible:ring-red-400/40',
+        class: 'bg-red-600 text-white enabled:hover:bg-red-700 focus-visible:ring-red-400/40',
       },
       {
         variant: 'outline',
         color: 'brand',
-        class: 'border-brand text-brand hover:bg-brand/10 focus-visible:ring-brand/40',
+        class: 'border-brand text-brand enabled:hover:bg-brand/10 focus-visible:ring-brand/40',
       },
       {
         variant: 'outline',
         color: 'sand',
-        class: 'border-sand text-brand-dark hover:bg-sand/30 focus-visible:ring-brand/30',
+        class: 'border-sand text-brand-dark enabled:hover:bg-sand/30 focus-visible:ring-brand/30',
       },
       {
         variant: 'outline',
         color: 'danger',
-        class: 'border-red-300 text-red-600 hover:bg-red-50 focus-visible:ring-red-400/40',
+        class: 'border-red-300 text-red-600 enabled:hover:bg-red-50 focus-visible:ring-red-400/40',
       },
       {
         variant: 'transparent',
         color: 'brand',
-        class:
-          'text-brand-dark hover:bg-brand/10 focus-visible:ring-brand/30 disabled:hover:bg-transparent',
+        class: 'text-brand-dark enabled:hover:bg-brand/10 focus-visible:ring-brand/30',
       },
       {
         variant: 'transparent',
         color: 'sand',
-        class: 'text-brand-dark hover:bg-sand/30 focus-visible:ring-brand/20 disabled:hover:bg-transparent',
+        class: 'text-brand-dark enabled:hover:bg-sand/30 focus-visible:ring-brand/20',
       },
       {
         variant: 'transparent',
         color: 'danger',
-        class: 'text-red-600 hover:bg-red-50 focus-visible:ring-red-400/30 disabled:hover:bg-transparent',
+        class: 'text-red-600 enabled:hover:bg-red-50 focus-visible:ring-red-400/30',
       },
     ],
     defaultVariants: {

@@ -71,6 +71,41 @@ type ReservationBreakdownData = {
   total: number;
 };
 
+type EstimatePersonRow = {
+  personId: number;
+  name: string;
+  band: AgeBand;
+  nightlyPrice: number;
+  nights: number;
+  total: number;
+};
+
+type EstimateSeasonGroup = {
+  seasonName: string | null;
+  days: number;
+  discountPercent: number;
+  bungalovTotal: number;
+  avgFams: number;
+  personRows: EstimatePersonRow[];
+  taxTotal: number;
+};
+
+type SelectionEstimate = {
+  label: string;
+  selectedDays: number;
+  overlappingFamilies: Array<{ name: string; days: number }>;
+  seasonGroups: EstimateSeasonGroup[];
+  bungalovPausal: number;
+  bungalovDiscountPercent: number;
+  bungalovDiscountAmount: number;
+  bungalovDiscountedTotal: number;
+  simuniPersons: number;
+  simuniTax: number;
+  simuni: number;
+  bungalov: number;
+  total: number;
+};
+
 /** Short `d. m.` label for a `YYYY-MM-DD` key. */
 function shortDay(dayKey: string): string {
   const [, month, day] = dayKey.split('-').map(Number);
@@ -445,43 +480,80 @@ export function AvailabilityPage({
     [filteredLines]
   );
 
+  // Per-day family count for calendar dot rendering in the modal.
+  // Each dot represents one distinct family with a reservation on that day.
+  // The reservation currently being edited is excluded so its own days don't
+  // produce dots.
+  const modalOccupancy = useMemo(() => {
+    const familiesPerDay = new Map<string, Set<number>>();
+    for (const reservation of reservations) {
+      if (editing && reservation.id === editing.id) continue;
+      for (const day of eachDayKeyInRange(reservation.startDay, reservation.endDay)) {
+        let set = familiesPerDay.get(day);
+        if (!set) {
+          set = new Set();
+          familiesPerDay.set(day, set);
+        }
+        set.add(reservation.userId);
+      }
+    }
+    const result = new Map<string, number>();
+    for (const [day, families] of familiesPerDay) {
+      result.set(day, families.size);
+    }
+    return result;
+  }, [reservations, editing]);
+
   // Days that another reservation already holds remain selectable now that
   // several families may share the bungalow; we keep all days enabled.
   const disabledDays = useMemo<Date[]>(() => [], []);
 
-  // Informative price estimate for the currently selected range. The per-day
-  // price depends on the total number of reserved days (union across families),
-  // and each day's price is shared with the other families present that day.
-  const selectionEstimate = useMemo(() => {
-    if (!range?.from) {
-      return null;
-    }
+  // Detailed price estimate for the currently selected range: overlapping
+  // families, per-season bungalov share, and Simuni person/tax charges.
+  const selectionEstimate = useMemo((): SelectionEstimate | null => {
+    if (!range?.from) return null;
+
     const startKey = toDayKey(range.from);
     const endKey = toDayKey(range.to ?? range.from);
     const selectedDays = eachDayKeyInRange(startKey, endKey);
+    if (selectedDays.length === 0) return null;
 
-    // Project the occupied-day union and per-day family sets as if this
-    // reservation were saved, ignoring the one being edited.
-    const unionExclEditing = new Set<string>();
-    const famsExclEditing = new Map<string, Set<number>>();
+    // Build family presence map from all reservations except the one being edited.
+    const familyNames = new Map<number, string>();
+    const famsPerDay = new Map<string, Set<number>>();
     for (const reservation of reservations) {
       if (editing && reservation.id === editing.id) continue;
+      if (!familyNames.has(reservation.userId)) {
+        familyNames.set(reservation.userId, reservation.ownerName);
+      }
       for (const day of eachDayKeyInRange(reservation.startDay, reservation.endDay)) {
-        unionExclEditing.add(day);
-        let set = famsExclEditing.get(day);
+        let set = famsPerDay.get(day);
         if (!set) {
           set = new Set();
-          famsExclEditing.set(day, set);
+          famsPerDay.set(day, set);
         }
         set.add(reservation.userId);
       }
     }
 
-    const projectedOccupied = new Set(unionExclEditing);
+    // Families that overlap with the selected range.
+    const overlapDays = new Map<number, number>();
+    for (const day of selectedDays) {
+      const families = famsPerDay.get(day);
+      if (!families) continue;
+      for (const familyId of families) {
+        overlapDays.set(familyId, (overlapDays.get(familyId) ?? 0) + 1);
+      }
+    }
+    const overlappingFamilies = [...overlapDays.entries()]
+      .map(([userId, days]) => ({ name: familyNames.get(userId) ?? '?', days }))
+      .sort((a, b) => b.days - a.days);
+
+    // Project occupied days (existing + new selection) for weight computation.
+    const projectedOccupied = new Set<string>();
+    for (const [day] of famsPerDay) projectedOccupied.add(day);
     for (const day of selectedDays) projectedOccupied.add(day);
 
-    // Season weight per day, mirroring computeBungalovPricing, projected onto
-    // the occupied-day union that would exist if this reservation were saved.
     const weightOf = (day: string) => {
       if (maxAdult <= 0) return 1;
       const season = seasonForDay(settings.seasons, day);
@@ -490,23 +562,108 @@ export function AvailabilityPage({
     let projectedTotalWeight = 0;
     for (const day of projectedOccupied) projectedTotalWeight += weightOf(day);
 
-    let cost = 0;
+    // Persons attending this reservation (for Simuni calculation).
+    const selectedPersons = availablePersons.filter((p) => selectedPersonIds.includes(p.id));
+
+    // Group selected days by season (preserving order of first appearance).
+    const groupOrder: string[] = [];
+    type GroupAccum = { seasonName: string | null; dayKeys: string[]; discountPercent: number };
+    const groupMap = new Map<string, GroupAccum>();
     for (const day of selectedDays) {
-      const others = famsExclEditing.get(day)?.size ?? 0;
-      const fams = others + 1; // plus this reservation's family
-      const dayPrice =
-        projectedTotalWeight > 0
-          ? (bungalovPricing.discountedTotal * weightOf(day)) / projectedTotalWeight
-          : 0;
-      cost += dayPrice / fams;
+      const season = seasonForDay(settings.seasons, day);
+      const key = season ? seasonLabel(season) : '__none__';
+      if (!groupMap.has(key)) {
+        groupOrder.push(key);
+        groupMap.set(key, {
+          seasonName: season ? seasonLabel(season) : null,
+          dayKeys: [],
+          discountPercent: season ? seasonDiscountPercent(season, maxAdult) : 0
+        });
+      }
+      groupMap.get(key)!.dayKeys.push(day);
     }
+
+    let totalBungalov = 0;
+    let totalSimuniPersons = 0;
+    let totalSimuniTax = 0;
+
+    const seasonGroups: EstimateSeasonGroup[] = groupOrder.map((key) => {
+      const { seasonName, dayKeys, discountPercent } = groupMap.get(key)!;
+      const dayCount = dayKeys.length;
+
+      // Bungalov share for this group's days.
+      let bungalovGroupTotal = 0;
+      let famSum = 0;
+      for (const day of dayKeys) {
+        const others = famsPerDay.get(day)?.size ?? 0;
+        const fams = others + 1;
+        famSum += fams;
+        const w = weightOf(day);
+        const dayPrice =
+          projectedTotalWeight > 0
+            ? (bungalovPricing.discountedTotal * w) / projectedTotalWeight
+            : 0;
+        bungalovGroupTotal += dayPrice / fams;
+      }
+      const avgFams = dayCount > 0 ? Math.round(famSum / dayCount) : 1;
+      totalBungalov += bungalovGroupTotal;
+
+      // Simuni per-person cost for this group (non-pavšal attendees only).
+      const seasonObj = seasonName
+        ? settings.seasons.find((s) => seasonLabel(s) === seasonName) ?? null
+        : null;
+      const personRows: EstimatePersonRow[] = [];
+      if (seasonObj) {
+        for (const person of selectedPersons) {
+          if (person.naPausalu) continue;
+          const band = ageBand(computeAge(person.birthday));
+          const nightlyPrice = seasonPriceForBand(seasonObj, band);
+          const total = nightlyPrice * dayCount;
+          personRows.push({
+            personId: person.id,
+            name: person.name,
+            band,
+            nightlyPrice,
+            nights: dayCount,
+            total
+          });
+          totalSimuniPersons += total;
+        }
+      }
+
+      const taxTotal = selectedPersons.length * dayCount * settings.touristTax;
+      totalSimuniTax += taxTotal;
+
+      return { seasonName, days: dayCount, discountPercent, bungalovTotal: bungalovGroupTotal, avgFams, personRows, taxTotal };
+    });
+
+    const simuni = totalSimuniPersons + totalSimuniTax;
 
     return {
       label: formatDayRange(startKey, endKey),
       selectedDays: selectedDays.length,
-      cost
+      overlappingFamilies,
+      seasonGroups,
+      bungalovPausal: settings.pausalPrice,
+      bungalovDiscountPercent: settings.oneoffDiscountPercent,
+      bungalovDiscountAmount: settings.pausalPrice * (settings.oneoffDiscountPercent / 100),
+      bungalovDiscountedTotal: bungalovPricing.discountedTotal,
+      simuniPersons: totalSimuniPersons,
+      simuniTax: totalSimuniTax,
+      simuni,
+      bungalov: totalBungalov,
+      total: simuni + totalBungalov
     };
-  }, [range, editing, reservations, bungalovPricing.discountedTotal, settings.seasons, maxAdult]);
+  }, [
+    range,
+    editing,
+    reservations,
+    bungalovPricing,
+    settings,
+    maxAdult,
+    selectedPersonIds,
+    availablePersons
+  ]);
 
   function openCreate() {
     setEditing(null);
@@ -642,7 +799,7 @@ export function AvailabilityPage({
         )}
 
         {filteredLines.length === 0 ? (
-          <p className="rounded-xl bg-sky/70 p-3 text-sm text-brand-dark">
+          <p className="text-sm text-brand-dark">
             {isAdmin
               ? 'Ni rezervacij. Klikni „Dodaj rezervacijo“, da ustvariš novo.'
               : 'Še nimaš rezervacij. Klikni „Dodaj rezervacijo“, da ustvariš novo.'}
@@ -1024,27 +1181,183 @@ export function AvailabilityPage({
             disablePast={!isAdmin}
             defaultMonth={range?.from}
             numberOfMonths={2}
+            occupancy={modalOccupancy}
           />
         </div>
 
         {selectionEstimate ? (
-          <div className="mt-4 rounded-xl bg-sky/70 p-3">
-            <div className="flex items-center justify-between text-sm text-brand-dark">
-              <span>{selectionEstimate.label}</span>
-              <span className="text-brand/70">
+          <div className="mt-4 space-y-4 rounded-xl bg-sky/70 p-4 text-sm">
+            {/* Header */}
+            <div className="flex items-center justify-between">
+              <span className="font-medium text-brand-dark">{selectionEstimate.label}</span>
+              <span className="text-xs text-brand/60">
                 {selectionEstimate.selectedDays}{' '}
                 {selectionEstimate.selectedDays === 1 ? 'dan' : 'dni'}
               </span>
             </div>
-            <div className="mt-1 flex items-center justify-between">
-              <span className="text-sm font-semibold text-brand-dark">Ocenjena cena</span>
-              <span className="text-lg font-bold text-brand">
-                {formatEur(selectionEstimate.cost)}
-              </span>
+
+            {/* Overlapping families */}
+            {selectionEstimate.overlappingFamilies.length > 0 && (
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-xs text-brand/60">Hkrati v bungalovu:</span>
+                {selectionEstimate.overlappingFamilies.map((f, i) => (
+                  <span
+                    key={i}
+                    className="rounded-full bg-brand/10 px-2 py-0.5 text-xs font-medium text-brand-dark"
+                  >
+                    {f.name}
+                    {selectionEstimate.selectedDays !== f.days &&
+                      ` · ${f.days} ${f.days === 1 ? 'dan' : 'dni'}`}
+                  </span>
+                ))}
+              </div>
+            )}
+
+            {/* Bungalov section */}
+            <div className="space-y-1.5">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-brand/50">
+                Bungalov
+              </p>
+
+              {/* Pavšal summary */}
+              <div className="rounded-lg bg-white/60 px-3 py-2 text-xs">
+                <div className="flex justify-between text-brand/70">
+                  <span>Letni pavšal</span>
+                  <span>{formatEur(selectionEstimate.bungalovPausal)}</span>
+                </div>
+                {selectionEstimate.bungalovDiscountPercent > 0 && (
+                  <div className="flex justify-between text-brand/70">
+                    <span>Popust ({selectionEstimate.bungalovDiscountPercent} %)</span>
+                    <span>−{formatEur(selectionEstimate.bungalovDiscountAmount)}</span>
+                  </div>
+                )}
+                <div className="mt-1 flex justify-between border-t border-brand/10 pt-1 font-medium text-brand-dark">
+                  <span>Za pokriti skupaj</span>
+                  <span>{formatEur(selectionEstimate.bungalovDiscountedTotal)}</span>
+                </div>
+              </div>
+
+              {/* Per-season bungalov breakdown */}
+              {selectionEstimate.seasonGroups.map((group, i) => (
+                <div
+                  key={i}
+                  className="flex items-start justify-between rounded-lg bg-white/60 px-3 py-2 text-xs"
+                >
+                  <div className="leading-relaxed">
+                    <span className="font-medium text-brand-dark">
+                      {group.seasonName ?? '(zunaj sezone)'}
+                    </span>
+                    <span className="ml-2 text-brand/60">
+                      {group.days} {group.days === 1 ? 'dan' : 'dni'}
+                    </span>
+                    {group.discountPercent > 0 && (
+                      <span className="ml-2 text-brand/50">
+                        {group.discountPercent.toFixed(0)} % pop.
+                      </span>
+                    )}
+                    {group.avgFams > 1 && (
+                      <span className="ml-2 text-brand/50">÷ {group.avgFams} drž.</span>
+                    )}
+                  </div>
+                  <span className="ml-3 shrink-0 font-semibold text-brand-dark">
+                    {formatEur(group.bungalovTotal)}
+                  </span>
+                </div>
+              ))}
             </div>
-            <p className="mt-1 text-xs text-brand/60">
-              Cena posameznega dne se deli med vse družine, ki so ta dan v bungalovu.
-            </p>
+
+            {/* Šimuni section */}
+            {(selectionEstimate.seasonGroups.some((g) => g.personRows.length > 0) ||
+              selectionEstimate.simuniTax > 0) && (
+              <div className="space-y-1.5">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-brand/50">
+                  Šimuni
+                </p>
+                <div className="rounded-lg bg-white/60 px-3 py-2 text-xs space-y-1">
+                  {selectionEstimate.seasonGroups.length > 1
+                    ? selectionEstimate.seasonGroups.map((group, gi) =>
+                        group.personRows.length > 0 ? (
+                          <div key={gi}>
+                            <p className="mb-0.5 text-brand/40">{group.seasonName}</p>
+                            {group.personRows.map((row, ri) => (
+                              <div
+                                key={ri}
+                                className="flex justify-between pl-2 text-brand/70"
+                              >
+                                <span>
+                                  {row.name}{' '}
+                                  <span className="text-brand/40">
+                                    ({BAND_LABEL[row.band]})
+                                  </span>{' '}
+                                  <span className="text-brand/40">
+                                    {row.nights} × {formatEur(row.nightlyPrice)}
+                                  </span>
+                                </span>
+                                <span className="ml-2 shrink-0 font-medium text-brand-dark">
+                                  {formatEur(row.total)}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        ) : null
+                      )
+                    : selectionEstimate.seasonGroups[0]?.personRows.map((row, ri) => (
+                        <div key={ri} className="flex justify-between text-brand/70">
+                          <span>
+                            {row.name}{' '}
+                            <span className="text-brand/40">({BAND_LABEL[row.band]})</span>{' '}
+                            <span className="text-brand/40">
+                              {row.nights} × {formatEur(row.nightlyPrice)}
+                            </span>
+                          </span>
+                          <span className="ml-2 shrink-0 font-medium text-brand-dark">
+                            {formatEur(row.total)}
+                          </span>
+                        </div>
+                      ))}
+
+                  {selectionEstimate.simuniTax > 0 && (
+                    <div className="flex justify-between text-brand/70">
+                      <span>
+                        Turistična taksa{' '}
+                        <span className="text-brand/40">
+                          {selectedPersonIds.length} os. ×{' '}
+                          {selectionEstimate.selectedDays}{' '}
+                          {selectionEstimate.selectedDays === 1 ? 'noč' : 'noči'} ×{' '}
+                          {formatEur(settings.touristTax)}
+                        </span>
+                      </span>
+                      <span className="ml-2 shrink-0 font-medium text-brand-dark">
+                        {formatEur(selectionEstimate.simuniTax)}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Summary */}
+            <div className="space-y-1 border-t border-brand/15 pt-3">
+              <div className="flex justify-between text-xs text-brand/70">
+                <span>Za plačati Šimuni</span>
+                <span className="font-medium text-brand-dark">
+                  {formatEur(selectionEstimate.simuni)}
+                </span>
+              </div>
+              <div className="flex justify-between text-xs text-brand/70">
+                <span>Za plačati bungalov</span>
+                <span className="font-medium text-brand-dark">
+                  {formatEur(selectionEstimate.bungalov)}
+                </span>
+              </div>
+              <div className="flex justify-between font-bold text-brand">
+                <span>Skupaj ocena</span>
+                <span className="text-lg">{formatEur(selectionEstimate.total)}</span>
+              </div>
+              <p className="text-[10px] text-brand/50">
+                Bungalov se deli med vse družine prisotne ta dan.
+              </p>
+            </div>
           </div>
         ) : (
           <p className="mt-4 rounded-xl bg-sky/70 p-3 text-sm text-brand/70">

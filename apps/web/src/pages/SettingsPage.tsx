@@ -393,7 +393,7 @@ export function SettingsPage({ settings, onSave, isAdmin = false }: SettingsPage
           </p>
 
           {seasons.length === 0 ? (
-            <p className="rounded-xl bg-sky/70 p-3 text-sm text-brand-dark">
+            <p className="text-sm text-brand-dark">
               Ni definiranih sezon. Klikni „Dodaj sezono“, da ustvariš novo.
             </p>
           ) : (
