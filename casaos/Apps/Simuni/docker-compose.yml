@@ -1,7 +1,7 @@
 name: simuni
 services:
   simuni:
-    image: ghcr.io/mavsar/simuni:v1.0.1
+    image: ghcr.io/mavsar/simuni:v1.0.2
     pull_policy: always
     container_name: simuni
     environment:
