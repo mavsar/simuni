@@ -6,11 +6,11 @@ services:
     container_name: simuni
     environment:
       NODE_ENV: production
-      PORT: "3000"
+      PORT: "5190"
       DATABASE_PATH: /app/data/simuni.db
     ports:
-      - target: 3000
-        published: "3000"
+      - target: 5190
+        published: "5190"
         protocol: tcp
     volumes:
       - type: bind
@@ -19,7 +19,7 @@ services:
     restart: unless-stopped
     x-casaos:
       ports:
-        - container: "3000"
+        - container: "5190"
           description:
             en_US: Simuni web UI.
       volumes:
@@ -57,4 +57,4 @@ x-casaos:
   title:
     en_US: Simuni
   index: /
-  port_map: "3000"
+  port_map: "5190"
