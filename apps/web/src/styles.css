@@ -1,0 +1,125 @@
+@import "tailwindcss";
+
+/* ── Šimuni brand theme (camping-simuni.hr) ── */
+@theme {
+  --color-brand: #1055b5;
+  --color-brand-dark: #003987;
+  --color-sand: #f8e3cb;
+  --color-sky: #eef3fa;
+  --color-ink: #003987;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+button,
+[role="button"] {
+  cursor: pointer;
+}
+
+:root {
+  font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+  color: var(--color-ink);
+}
+
+html,
+body,
+#root {
+  width: 100%;
+  height: 100%;
+  min-height: 100%;
+  overflow: hidden;
+}
+
+@media (display-mode: standalone) {
+  html,
+  body,
+  #root {
+    height: 100lvh;
+    min-height: 100lvh;
+  }
+}
+
+html {
+  /* Brand blue fallback while the hero image loads. */
+  background-color: var(--color-brand);
+}
+
+body {
+  margin: 0;
+  color: var(--color-ink);
+  /* Hero background from camping-simuni.hr */
+  background-image: url("/background.jpg");
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-attachment: fixed;
+}
+
+/* ── Custom scrollbars ── */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(16, 85, 181, 0.35);
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(16, 85, 181, 0.55);
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(16, 85, 181, 0.35) transparent;
+}
+
+/* ── react-day-picker brand theme (range picker) ── */
+.rdp-simuni.rdp-root {
+  --rdp-accent-color: var(--color-brand);
+  --rdp-accent-background-color: var(--color-sky);
+  --rdp-range_middle-background-color: var(--color-sky);
+  --rdp-range_start-date-background-color: var(--color-brand);
+  --rdp-range_end-date-background-color: var(--color-brand);
+  --rdp-today-color: var(--color-brand);
+  --rdp-day-width: 40px;
+  --rdp-day-height: 40px;
+  --rdp-day_button-width: 38px;
+  --rdp-day_button-height: 38px;
+  --rdp-day_button-border-radius: 12px;
+  --rdp-months-gap: 1.5rem;
+  margin: 0 auto;
+  color: var(--color-ink);
+}
+
+.rdp-simuni .rdp-chevron {
+  fill: var(--color-brand);
+}
+
+.rdp-simuni .rdp-day_button:hover:not(:disabled) {
+  background-color: rgba(16, 85, 181, 0.12);
+}
+
+.rdp-simuni .rdp-range_middle .rdp-day_button:hover:not(:disabled) {
+  background-color: transparent;
+}
+
+/* Keep selected range endpoints readable on hover (white text needs the
+   brand fill, otherwise the number disappears on the light hover background). */
+.rdp-simuni .rdp-range_start .rdp-day_button:hover:not(:disabled),
+.rdp-simuni .rdp-range_end .rdp-day_button:hover:not(:disabled) {
+  background-color: var(--color-brand-dark);
+  color: white;
+}

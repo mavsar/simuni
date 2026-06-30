@@ -1,0 +1,16 @@
+services:
+  simuni:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: simuni:latest
+    container_name: simuni
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - DATABASE_PATH=/app/data/simuni.db
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
