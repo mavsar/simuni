@@ -1,4 +1,5 @@
-import { CalendarCheck, Home, LogOut, ReceiptEuro, Settings, UserRound } from 'lucide-react';
+import { CalendarCheck, Home, LogOut, Menu, ReceiptEuro, Settings, UserRound, X } from 'lucide-react';
+import { useEffect, useState } from 'react';
 
 import { SimuniLogo } from './SimuniLogo';
 import { Button } from './ui/Button';
@@ -15,6 +16,12 @@ export type AppHeaderProps = {
   userName?: string;
 };
 
+type NavItem = {
+  value: AppHeaderTab;
+  label: string;
+  Icon: React.ComponentType<{ size?: number; className?: string; 'aria-hidden'?: boolean }>;
+};
+
 export function AppHeader({
   title = 'Šimuni Bungalov 41',
   activeTab,
@@ -23,69 +30,177 @@ export function AppHeader({
   isAdmin = false,
   userName,
 }: AppHeaderProps) {
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  // Lock body scroll while menu is open
+  useEffect(() => {
+    document.body.style.overflow = menuOpen ? 'hidden' : '';
+    return () => { document.body.style.overflow = ''; };
+  }, [menuOpen]);
+
+  // Close on Escape
+  useEffect(() => {
+    if (!menuOpen) return;
+    function handleKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') setMenuOpen(false);
+    }
+    document.addEventListener('keydown', handleKey);
+    return () => document.removeEventListener('keydown', handleKey);
+  }, [menuOpen]);
+
+  const navItems: NavItem[] = [
+    { value: 'razpolozljivost', label: 'Razpoložljivost', Icon: CalendarCheck },
+    {
+      value: 'nastavitve',
+      label: isAdmin ? 'Nastavitve' : 'Cenik',
+      Icon: isAdmin ? Settings : ReceiptEuro,
+    },
+    ...(isAdmin
+      ? [{ value: 'druzine' as AppHeaderTab, label: 'Družine', Icon: Home }]
+      : [{ value: 'profil' as AppHeaderTab, label: 'Moj profil', Icon: UserRound }]),
+  ];
+
+  function handleTabSelect(tab: AppHeaderTab) {
+    onTabChange(tab);
+    setMenuOpen(false);
+  }
+
+  function handleLogout() {
+    setMenuOpen(false);
+    onLogout?.();
+  }
+
   return (
-    <header className="w-full border-b border-white">
-      <div className="flex h-16 w-full items-stretch">
-        {/* Logo */}
-        <div className="flex items-center border-r border-white px-5 sm:px-6">
-          <SimuniLogo className="h-7 w-auto text-white drop-shadow-sm" />
-        </div>
-
-        {/* Title */}
-        <div className="flex items-center px-5">
-          <h1 className="text-base font-semibold tracking-tight text-white drop-shadow-sm sm:text-lg">
-            {title}
-          </h1>
-        </div>
-
-        {/* Tabs */}
-        <div className="flex flex-1 items-center justify-center px-4">
-          <Tabs
-            variant="underline"
-            value={activeTab}
-            onValueChange={(value) => onTabChange(value as AppHeaderTab)}
-            aria-label="Glavna navigacija"
-          >
-            <Tab value="razpolozljivost" icon={CalendarCheck}>
-              Razpoložljivost
-            </Tab>
-            <Tab value="nastavitve" icon={isAdmin ? Settings : ReceiptEuro}>
-              {isAdmin ? 'Nastavitve' : 'Cenik'}
-            </Tab>
-            {isAdmin && (
-              <Tab value="druzine" icon={Home}>
-                Družine
-              </Tab>
-            )}
-            {!isAdmin && (
-              <Tab value="profil" icon={UserRound}>
-                Moj profil
-              </Tab>
-            )}
-          </Tabs>
-        </div>
-
-        {/* Logged-in user */}
-        {userName && (
-          <div className="hidden items-center border-l border-white px-4 sm:flex">
-            <span className="text-sm font-medium text-white/90 drop-shadow-sm">{userName}</span>
+    <>
+      {/* Header bar — always on top (z-50) so it floats above the full-screen overlay */}
+      <header className="relative z-50 w-full border-b border-white">
+        <div className="flex h-16 w-full items-stretch">
+          {/* Logo */}
+          <div className="flex items-center border-r border-white px-5 sm:px-6">
+            <SimuniLogo className="h-7 w-auto text-white drop-shadow-sm" />
           </div>
-        )}
 
-        {/* Logout — square icon button with camping-simuni "Rezerviraj" wipe hover */}
-        <Button
-          onClick={onLogout}
-          aria-label="Odjava"
-          title="Odjava"
-          className="group relative aspect-square h-full overflow-hidden rounded-none border-l border-white px-0 py-0 shadow-none duration-300 hover:bg-brand hover:text-brand focus-visible:ring-inset focus-visible:ring-white/60"
+          {/* Title */}
+          <div className="flex items-center px-5">
+            <h1 className="text-base font-semibold tracking-tight text-white drop-shadow-sm sm:text-lg">
+              {title}
+            </h1>
+          </div>
+
+          {/* Tabs — desktop only */}
+          <div className="hidden flex-1 items-center justify-center px-4 lg:flex">
+            <Tabs
+              variant="underline"
+              value={activeTab}
+              onValueChange={(value) => onTabChange(value as AppHeaderTab)}
+              aria-label="Glavna navigacija"
+            >
+              {navItems.map(({ value, label, Icon }) => (
+                <Tab key={value} value={value} icon={Icon}>
+                  {label}
+                </Tab>
+              ))}
+            </Tabs>
+          </div>
+
+          {/* Spacer on mobile */}
+          <div className="flex-1 lg:hidden" />
+
+          {/* Logged-in user — desktop only */}
+          {userName && (
+            <div className="hidden items-center border-l border-white px-4 lg:flex">
+              <span className="text-sm font-medium text-white/90 drop-shadow-sm">{userName}</span>
+            </div>
+          )}
+
+          {/* Logout — desktop only */}
+          <Button
+            onClick={onLogout}
+            aria-label="Odjava"
+            title="Odjava"
+            className="group relative hidden aspect-square h-full overflow-hidden rounded-none border-l border-white px-0 py-0 shadow-none duration-300 hover:bg-brand hover:text-brand focus-visible:ring-inset focus-visible:ring-white/60 lg:flex"
+          >
+            <span
+              aria-hidden
+              className="absolute inset-0 -translate-x-full bg-white transition-all duration-300 ease-[cubic-bezier(0.39,0.575,0.565,1)] [clip-path:polygon(15%_0%,100%_0%,85%_100%,0%_100%)] group-hover:translate-x-0 group-hover:[clip-path:polygon(0%_0%,100%_0%,100%_100%,0%_100%)]"
+            />
+            <LogOut size={20} className="relative z-10 shrink-0" aria-hidden />
+          </Button>
+
+          {/* Hamburger / close toggle — mobile/tablet only */}
+          <button
+            type="button"
+            aria-label={menuOpen ? 'Zapri meni' : 'Odpri meni'}
+            aria-expanded={menuOpen}
+            aria-controls="mobile-nav"
+            onClick={() => setMenuOpen((prev) => !prev)}
+            className="flex aspect-square h-full items-center justify-center border-l border-white text-white transition-colors hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white/60 lg:hidden"
+          >
+            {menuOpen ? <X size={22} aria-hidden /> : <Menu size={22} aria-hidden />}
+          </button>
+        </div>
+      </header>
+
+      {/* Full-screen mobile/tablet overlay */}
+      {menuOpen && (
+        <div
+          id="mobile-nav"
+          className="fixed inset-0 z-40 flex flex-col backdrop-blur-md lg:hidden"
+          style={{ background: 'rgba(10, 30, 60, 0.92)' }}
         >
-          <span
-            aria-hidden
-            className="absolute inset-0 -translate-x-full bg-white transition-all duration-300 ease-[cubic-bezier(0.39,0.575,0.565,1)] [clip-path:polygon(15%_0%,100%_0%,85%_100%,0%_100%)] group-hover:translate-x-0 group-hover:[clip-path:polygon(0%_0%,100%_0%,100%_100%,0%_100%)]"
-          />
-          <LogOut size={20} className="relative z-10 shrink-0" aria-hidden />
-        </Button>
-      </div>
-    </header>
+          {/* Spacer equal to header height */}
+          <div className="h-16 flex-shrink-0 border-b border-white/10" />
+
+          {/* Nav items — vertically centered in remaining space */}
+          <nav
+            aria-label="Mobilna navigacija"
+            className="flex flex-1 flex-col items-center justify-center gap-3 px-8"
+          >
+            {navItems.map(({ value, label, Icon }) => {
+              const isActive = activeTab === value;
+              return (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => handleTabSelect(value)}
+                  className={`group flex w-full max-w-xs items-center gap-4 rounded-2xl px-6 py-4 text-lg font-semibold transition-all duration-200 ${
+                    isActive
+                      ? 'bg-white/15 text-white ring-1 ring-white/20'
+                      : 'text-white/60 hover:bg-white/10 hover:text-white'
+                  }`}
+                >
+                  <Icon
+                    size={22}
+                    className={`shrink-0 transition-colors ${isActive ? 'text-white' : 'text-white/50 group-hover:text-white'}`}
+                    aria-hidden
+                  />
+                  {label}
+                  {isActive && (
+                    <span className="ml-auto h-2 w-2 rounded-full bg-white" aria-hidden />
+                  )}
+                </button>
+              );
+            })}
+          </nav>
+
+          {/* Bottom: username + logout */}
+          <div className="flex-shrink-0 border-t border-white/10 px-8 py-6">
+            {userName && (
+              <p className="mb-4 text-center text-xs font-medium uppercase tracking-widest text-white/40">
+                {userName}
+              </p>
+            )}
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="flex w-full items-center justify-center gap-3 rounded-2xl border border-white/15 px-6 py-3.5 text-base font-medium text-white/70 transition-all hover:border-white/30 hover:bg-white/10 hover:text-white"
+            >
+              <LogOut size={18} aria-hidden />
+              Odjava
+            </button>
+          </div>
+        </div>
+      )}
+    </>
   );
 }

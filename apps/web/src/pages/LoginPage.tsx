@@ -10,6 +10,7 @@ export function LoginPage() {
   const { login } = useAuth();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [rememberMe, setRememberMe] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -18,7 +19,7 @@ export function LoginPage() {
     setError(null);
     setSubmitting(true);
     try {
-      await login(username.trim(), password);
+      await login(username.trim(), password, rememberMe);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Prijava ni uspela.');
     } finally {
@@ -60,6 +61,16 @@ export function LoginPage() {
               onChange={(event) => setPassword(event.target.value)}
               required
             />
+          </label>
+
+          <label className="flex cursor-pointer items-center gap-2.5">
+            <input
+              type="checkbox"
+              checked={rememberMe}
+              onChange={(e) => setRememberMe(e.target.checked)}
+              className="h-4 w-4 rounded border-brand/30 text-brand focus:ring-brand"
+            />
+            <span className="text-sm text-brand-dark/80">Zapomni si me</span>
           </label>
 
           {error && <p className="text-sm font-medium text-red-600">{error}</p>}

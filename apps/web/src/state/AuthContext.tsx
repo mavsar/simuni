@@ -13,7 +13,7 @@ import type { User } from '../lib/types';
 type AuthContextValue = {
   user: User | null;
   loading: boolean;
-  login: (username: string, password: string) => Promise<void>;
+  login: (username: string, password: string, remember: boolean) => Promise<void>;
   logout: () => Promise<void>;
   /** Re-fetch the current user from the server (e.g. after editing the profile). */
   refreshUser: () => Promise<void>;
@@ -61,9 +61,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => window.removeEventListener(UNAUTHORIZED_EVENT, handleUnauthorized);
   }, []);
 
-  async function login(username: string, password: string) {
+  async function login(username: string, password: string, remember: boolean) {
     const { token, user: loggedIn } = await api.login(username, password);
-    setToken(token);
+    setToken(token, remember);
     setUser(loggedIn);
   }
 

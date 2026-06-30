@@ -648,110 +648,228 @@ export function AvailabilityPage({
               : 'Še nimaš rezervacij. Klikni „Dodaj rezervacijo“, da ustvariš novo.'}
           </p>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-brand/10 text-left text-xs uppercase tracking-wide text-brand/60">
-                  <th className="py-2 pr-3 font-medium">Obdobje</th>
-                  <th className="py-2 px-3 text-right font-medium">Za plačati Šimuni</th>
-                  <th className="py-2 px-3 text-right font-medium">Za plačati bungalov</th>
-                  <th className="py-2 px-3 text-right font-medium">Skupaj</th>
-                  <th className="py-2 pl-3" />
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-brand/10">
-                {filteredLines.map(({ reservation, days, breakdown }) => {
-                  const expanded = expandedId === reservation.id;
-                  return (
-                    <Fragment key={reservation.id}>
-                      <tr className="align-top">
-                        <td className="py-2.5 pr-3">
-                          <p className="font-medium text-brand-dark">
-                            {formatDayRange(reservation.startDay, reservation.endDay)}
-                          </p>
-                          <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-brand/60">
-                            {isAdmin && (
-                              <span className="font-medium">{reservation.ownerName} ·</span>
-                            )}
-                            <span>
-                              {days} {days === 1 ? 'dan' : 'dni'}
-                            </span>
-                            <span aria-hidden>·</span>
-                            <AttendeeCounts persons={reservation.persons} />
-                          </p>
-                        </td>
-                        <td className="whitespace-nowrap py-2.5 px-3 text-right text-brand-dark">
+          <>
+            {/* ── Mobile card list (< sm) ─────────────────────────────── */}
+            <div className="space-y-2 sm:hidden">
+              {filteredLines.map(({ reservation, days, breakdown }) => {
+                const expanded = expandedId === reservation.id;
+                return (
+                  <div
+                    key={reservation.id}
+                    className="overflow-hidden rounded-xl border border-brand/10 bg-white"
+                  >
+                    <div className="flex items-start justify-between gap-2 px-3 py-3">
+                      <div>
+                        <p className="font-medium text-brand-dark">
+                          {formatDayRange(reservation.startDay, reservation.endDay)}
+                        </p>
+                        <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-brand/60">
+                          {isAdmin && (
+                            <span className="font-medium">{reservation.ownerName} ·</span>
+                          )}
+                          <span>
+                            {days} {days === 1 ? 'dan' : 'dni'}
+                          </span>
+                          <span aria-hidden>·</span>
+                          <AttendeeCounts persons={reservation.persons} />
+                        </p>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-1">
+                        <Button
+                          variant="transparent"
+                          color="brand"
+                          size="iconSm"
+                          icon={Pencil}
+                          aria-label="Uredi rezervacijo"
+                          title="Uredi rezervacijo"
+                          onClick={() => openEdit(reservation)}
+                          className="rounded-full text-brand"
+                        />
+                        <Button
+                          variant="transparent"
+                          color="brand"
+                          size="iconSm"
+                          icon={expanded ? ChevronDown : ChevronRight}
+                          aria-label={expanded ? 'Skrij razčlenitev' : 'Pokaži razčlenitev'}
+                          title="Razčlenitev cene"
+                          aria-expanded={expanded}
+                          onClick={() =>
+                            setExpandedId((prev) =>
+                              prev === reservation.id ? null : reservation.id
+                            )
+                          }
+                          className="rounded-full text-brand"
+                        />
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-3 divide-x divide-brand/10 border-t border-brand/10">
+                      <div className="px-3 py-2">
+                        <p className="text-[10px] uppercase tracking-wide text-brand/50">Šimuni</p>
+                        <p className="text-sm font-medium text-brand-dark">
                           {formatEur(breakdown.simuni)}
-                        </td>
-                        <td className="whitespace-nowrap py-2.5 px-3 text-right font-semibold text-brand-dark">
+                        </p>
+                      </div>
+                      <div className="px-3 py-2">
+                        <p className="text-[10px] uppercase tracking-wide text-brand/50">
+                          Bungalov
+                        </p>
+                        <p className="text-sm font-semibold text-brand-dark">
                           {formatEur(breakdown.bungalov)}
-                        </td>
-                        <td className="whitespace-nowrap py-2.5 px-3 text-right font-semibold text-brand-dark">
+                        </p>
+                      </div>
+                      <div className="px-3 py-2">
+                        <p className="text-[10px] uppercase tracking-wide text-brand/50">Skupaj</p>
+                        <p className="text-sm font-semibold text-brand">
                           {formatEur(breakdown.total)}
-                        </td>
-                        <td className="py-2.5 pl-3">
-                          <div className="flex items-center justify-end gap-1">
-                            <Button
-                              variant="transparent"
-                              color="brand"
-                              size="iconSm"
-                              icon={Pencil}
-                              aria-label="Uredi rezervacijo"
-                              title="Uredi rezervacijo"
-                              onClick={() => openEdit(reservation)}
-                              className="rounded-full text-brand"
-                            />
-                            <Button
-                              variant="transparent"
-                              color="brand"
-                              size="iconSm"
-                              icon={expanded ? ChevronDown : ChevronRight}
-                              aria-label={expanded ? 'Skrij razčlenitev' : 'Pokaži razčlenitev'}
-                              title="Razčlenitev cene"
-                              aria-expanded={expanded}
-                              onClick={() =>
-                                setExpandedId((prev) => (prev === reservation.id ? null : reservation.id))
-                              }
-                              className="rounded-full text-brand"
-                            />
-                          </div>
-                        </td>
-                      </tr>
-                      {expanded && (
-                        <tr>
-                          <td colSpan={5} className="pb-3 pt-1">
-                            <ReservationBreakdown
-                              breakdown={breakdown}
-                              touristTax={settings.touristTax}
-                            />
+                        </p>
+                      </div>
+                    </div>
+                    {expanded && (
+                      <div className="border-t border-brand/10 px-3 pb-3 pt-2">
+                        <ReservationBreakdown
+                          breakdown={breakdown}
+                          touristTax={settings.touristTax}
+                        />
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+
+              {/* Mobile totals row */}
+              <div className="grid grid-cols-3 divide-x divide-brand/15 rounded-xl border border-brand/15 bg-sky/40">
+                <div className="px-3 py-2.5">
+                  <p className="text-[10px] uppercase tracking-wide text-brand/50">Šimuni</p>
+                  <p className="text-sm font-semibold text-brand-dark">
+                    {formatEur(totals.simuni)}
+                  </p>
+                </div>
+                <div className="px-3 py-2.5">
+                  <p className="text-[10px] uppercase tracking-wide text-brand/50">Bungalov</p>
+                  <p className="text-sm font-bold text-brand">{formatEur(totals.bungalov)}</p>
+                </div>
+                <div className="px-3 py-2.5">
+                  <p className="text-[10px] uppercase tracking-wide text-brand/50">Skupaj</p>
+                  <p className="text-sm font-semibold text-brand-dark">
+                    {formatEur(totals.total)}
+                  </p>
+                </div>
+              </div>
+
+              <p className="text-xs text-brand/60">
+                Med družine se deli samo najemnina za bungalov. „Za plačati Šimuni“ vključuje ceno
+                na osebo za tiste, ki niso na pavšalu, in turistično takso.
+              </p>
+            </div>
+
+            {/* ── Desktop table (sm+) ─────────────────────────────────── */}
+            <div className="hidden overflow-x-auto sm:block">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-brand/10 text-left text-xs uppercase tracking-wide text-brand/60">
+                    <th className="py-2 pr-3 font-medium">Obdobje</th>
+                    <th className="py-2 px-3 text-right font-medium">Za plačati Šimuni</th>
+                    <th className="py-2 px-3 text-right font-medium">Za plačati bungalov</th>
+                    <th className="py-2 px-3 text-right font-medium">Skupaj</th>
+                    <th className="py-2 pl-3" />
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-brand/10">
+                  {filteredLines.map(({ reservation, days, breakdown }) => {
+                    const expanded = expandedId === reservation.id;
+                    return (
+                      <Fragment key={reservation.id}>
+                        <tr className="align-top">
+                          <td className="py-2.5 pr-3">
+                            <p className="font-medium text-brand-dark">
+                              {formatDayRange(reservation.startDay, reservation.endDay)}
+                            </p>
+                            <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-brand/60">
+                              {isAdmin && (
+                                <span className="font-medium">{reservation.ownerName} ·</span>
+                              )}
+                              <span>
+                                {days} {days === 1 ? 'dan' : 'dni'}
+                              </span>
+                              <span aria-hidden>·</span>
+                              <AttendeeCounts persons={reservation.persons} />
+                            </p>
+                          </td>
+                          <td className="whitespace-nowrap py-2.5 px-3 text-right text-brand-dark">
+                            {formatEur(breakdown.simuni)}
+                          </td>
+                          <td className="whitespace-nowrap py-2.5 px-3 text-right font-semibold text-brand-dark">
+                            {formatEur(breakdown.bungalov)}
+                          </td>
+                          <td className="whitespace-nowrap py-2.5 px-3 text-right font-semibold text-brand-dark">
+                            {formatEur(breakdown.total)}
+                          </td>
+                          <td className="py-2.5 pl-3">
+                            <div className="flex items-center justify-end gap-1">
+                              <Button
+                                variant="transparent"
+                                color="brand"
+                                size="iconSm"
+                                icon={Pencil}
+                                aria-label="Uredi rezervacijo"
+                                title="Uredi rezervacijo"
+                                onClick={() => openEdit(reservation)}
+                                className="rounded-full text-brand"
+                              />
+                              <Button
+                                variant="transparent"
+                                color="brand"
+                                size="iconSm"
+                                icon={expanded ? ChevronDown : ChevronRight}
+                                aria-label={expanded ? 'Skrij razčlenitev' : 'Pokaži razčlenitev'}
+                                title="Razčlenitev cene"
+                                aria-expanded={expanded}
+                                onClick={() =>
+                                  setExpandedId((prev) =>
+                                    prev === reservation.id ? null : reservation.id
+                                  )
+                                }
+                                className="rounded-full text-brand"
+                              />
+                            </div>
                           </td>
                         </tr>
-                      )}
-                    </Fragment>
-                  );
-                })}
-              </tbody>
-              <tfoot>
-                <tr className="border-t-2 border-brand/15">
-                  <td className="py-3 pr-3 text-sm font-semibold text-brand-dark">Skupaj</td>
-                  <td className="whitespace-nowrap py-3 px-3 text-right font-semibold text-brand-dark">
-                    {formatEur(totals.simuni)}
-                  </td>
-                  <td className="whitespace-nowrap py-3 px-3 text-right text-lg font-bold text-brand">
-                    {formatEur(totals.bungalov)}
-                  </td>
-                  <td className="whitespace-nowrap py-3 px-3 text-right font-semibold text-brand-dark">
-                    {formatEur(totals.total)}
-                  </td>
-                  <td className="py-3 pl-3" />
-                </tr>
-              </tfoot>
-            </table>
-            <p className="mt-3 text-xs text-brand/60">
-              Med družine se deli samo najemnina za bungalov. „Za plačati Šimuni“ vključuje ceno na
-              osebo za tiste, ki niso na pavšalu, in turistično takso.
-            </p>
-          </div>
+                        {expanded && (
+                          <tr>
+                            <td colSpan={5} className="pb-3 pt-1">
+                              <ReservationBreakdown
+                                breakdown={breakdown}
+                                touristTax={settings.touristTax}
+                              />
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    );
+                  })}
+                </tbody>
+                <tfoot>
+                  <tr className="border-t-2 border-brand/15">
+                    <td className="py-3 pr-3 text-sm font-semibold text-brand-dark">Skupaj</td>
+                    <td className="whitespace-nowrap py-3 px-3 text-right font-semibold text-brand-dark">
+                      {formatEur(totals.simuni)}
+                    </td>
+                    <td className="whitespace-nowrap py-3 px-3 text-right text-lg font-bold text-brand">
+                      {formatEur(totals.bungalov)}
+                    </td>
+                    <td className="whitespace-nowrap py-3 px-3 text-right font-semibold text-brand-dark">
+                      {formatEur(totals.total)}
+                    </td>
+                    <td className="py-3 pl-3" />
+                  </tr>
+                </tfoot>
+              </table>
+              <p className="mt-3 text-xs text-brand/60">
+                Med družine se deli samo najemnina za bungalov. „Za plačati Šimuni“ vključuje ceno na
+                osebo za tiste, ki niso na pavšalu, in turistično takso.
+              </p>
+            </div>
+          </>
         )}
       </section>
 

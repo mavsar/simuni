@@ -346,7 +346,7 @@ export function SettingsPage({ settings, onSave, isAdmin = false }: SettingsPage
           <dl
             className={
               readOnly
-                ? 'flex justify-between'
+                ? 'grid grid-cols-2 gap-x-4 gap-y-4 sm:grid-cols-4'
                 : 'mt-5 grid gap-5 rounded-xl bg-sky/70 px-0 py-4 sm:grid-cols-3'
             }
           >
@@ -397,89 +397,127 @@ export function SettingsPage({ settings, onSave, isAdmin = false }: SettingsPage
               Ni definiranih sezon. Klikni „Dodaj sezono“, da ustvariš novo.
             </p>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full border-separate border-spacing-y-1 text-sm">
-                <thead>
-                  <tr className="text-left text-xs uppercase tracking-wide text-brand/60">
-                    <th className="pl-0 pr-2 pb-1 font-medium">Obdobje</th>
-                    {PRICE_FIELDS.map((field) => (
-                      <th key={field.key} className="px-2 pb-1 font-medium">
-                        {field.label}
-                      </th>
-                    ))}
-                    <th className="px-2 pb-1 font-medium">Popust bungalov</th>
-                    {!readOnly && <th className="px-2 pb-1" />}
-                  </tr>
-                </thead>
-                <tbody>
+            <>
+              {/* ── Mobile card list — read-only only (< sm) ──────────── */}
+              {readOnly && (
+                <div className="space-y-2 sm:hidden">
                   {seasons.map((season, index) => (
-                    <tr key={season.id ?? `new-${index}`}>
-                      <td className="pl-0 pr-2 align-top">
-                        {readOnly ? (
-                          <div className="flex h-[38px] items-center whitespace-nowrap text-sm font-medium text-brand-dark">
-                            {`${formatMonthDay(season.startMonth, season.startDay)} – ${formatMonthDay(
-                              season.endMonth,
-                              season.endDay
-                            )}`}
-                          </div>
-                        ) : (
-                          <SeasonPeriodPicker
-                            startMonth={season.startMonth}
-                            startDay={season.startDay}
-                            endMonth={season.endMonth}
-                            endDay={season.endDay}
-                            onChange={(range) => setSeasonRange(index, range)}
-                          />
-                        )}
-                      </td>
-                      {PRICE_FIELDS.map((field) => (
-                        <td key={field.key} className="px-2 align-top">
-                          {readOnly ? (
-                            <div className="flex h-[38px] items-center whitespace-nowrap text-sm text-brand-dark">
-                              {formatEur(Number(season[field.key]) || 0)}
-                            </div>
-                          ) : (
-                            <Input
-                              aria-label={field.label}
-                              type="number"
-                              min={0}
-                              step="0.01"
-                              inputMode="decimal"
-                              value={season[field.key]}
-                              onChange={(event) =>
-                                updateSeason(index, field.key, event.target.value)
-                              }
-                              className="w-20 px-2"
-                            />
-                          )}
-                        </td>
-                      ))}
-                      <td className="px-2 align-center">
+                    <div
+                      key={season.id ?? `new-${index}`}
+                      className="overflow-hidden rounded-xl border border-brand/10 bg-white"
+                    >
+                      <div className="flex items-center justify-between px-3 py-2.5">
+                        <span className="font-medium text-brand-dark">
+                          {`${formatMonthDay(season.startMonth, season.startDay)} – ${formatMonthDay(season.endMonth, season.endDay)}`}
+                        </span>
                         <Label color="orange" size="lg">
                           {maxAdult > 0
                             ? `${((1 - (Number(season.priceAdult) || 0) / maxAdult) * 100).toFixed(0)} %`
                             : '—'}
                         </Label>
-                      </td>
-                      {!readOnly && (
-                        <td className="px-2 align-top">
-                          <Button
-                            type="button"
-                            variant="transparent"
-                            color="danger"
-                            size="iconSm"
-                            icon={Trash2}
-                            aria-label="Odstrani sezono"
-                            title="Odstrani sezono"
-                            onClick={() => removeSeason(index)}
-                          />
-                        </td>
-                      )}
-                    </tr>
+                      </div>
+                      <div className="grid grid-cols-3 divide-x divide-brand/10 border-t border-brand/10">
+                        {PRICE_FIELDS.map((field) => (
+                          <div key={field.key} className="px-3 py-2">
+                            <p className="text-[10px] uppercase tracking-wide text-brand/50">
+                              {field.label}
+                            </p>
+                            <p className="text-sm font-medium text-brand-dark">
+                              {formatEur(Number(season[field.key]) || 0)}
+                            </p>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
                   ))}
-                </tbody>
-              </table>
-            </div>
+                </div>
+              )}
+
+              {/* ── Table — admin always; read-only on sm+ ───────────────── */}
+              <div className={readOnly ? 'hidden overflow-x-auto sm:block' : 'overflow-x-auto'}>
+                <table className="w-full border-separate border-spacing-y-1 text-sm">
+                  <thead>
+                    <tr className="text-left text-xs uppercase tracking-wide text-brand/60">
+                      <th className="pl-0 pr-2 pb-1 font-medium">Obdobje</th>
+                      {PRICE_FIELDS.map((field) => (
+                        <th key={field.key} className="px-2 pb-1 font-medium">
+                          {field.label}
+                        </th>
+                      ))}
+                      <th className="px-2 pb-1 font-medium">Popust bungalov</th>
+                      {!readOnly && <th className="px-2 pb-1" />}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {seasons.map((season, index) => (
+                      <tr key={season.id ?? `new-${index}`}>
+                        <td className="pl-0 pr-2 align-top">
+                          {readOnly ? (
+                            <div className="flex h-[38px] items-center whitespace-nowrap text-sm font-medium text-brand-dark">
+                              {`${formatMonthDay(season.startMonth, season.startDay)} – ${formatMonthDay(
+                                season.endMonth,
+                                season.endDay
+                              )}`}
+                            </div>
+                          ) : (
+                            <SeasonPeriodPicker
+                              startMonth={season.startMonth}
+                              startDay={season.startDay}
+                              endMonth={season.endMonth}
+                              endDay={season.endDay}
+                              onChange={(range) => setSeasonRange(index, range)}
+                            />
+                          )}
+                        </td>
+                        {PRICE_FIELDS.map((field) => (
+                          <td key={field.key} className="px-2 align-top">
+                            {readOnly ? (
+                              <div className="flex h-[38px] items-center whitespace-nowrap text-sm text-brand-dark">
+                                {formatEur(Number(season[field.key]) || 0)}
+                              </div>
+                            ) : (
+                              <Input
+                                aria-label={field.label}
+                                type="number"
+                                min={0}
+                                step="0.01"
+                                inputMode="decimal"
+                                value={season[field.key]}
+                                onChange={(event) =>
+                                  updateSeason(index, field.key, event.target.value)
+                                }
+                                className="w-20 px-2"
+                              />
+                            )}
+                          </td>
+                        ))}
+                        <td className="px-2 align-center">
+                          <Label color="orange" size="lg">
+                            {maxAdult > 0
+                              ? `${((1 - (Number(season.priceAdult) || 0) / maxAdult) * 100).toFixed(0)} %`
+                              : '—'}
+                          </Label>
+                        </td>
+                        {!readOnly && (
+                          <td className="px-2 align-top">
+                            <Button
+                              type="button"
+                              variant="transparent"
+                              color="danger"
+                              size="iconSm"
+                              icon={Trash2}
+                              aria-label="Odstrani sezono"
+                              title="Odstrani sezono"
+                              onClick={() => removeSeason(index)}
+                            />
+                          </td>
+                        )}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
           )}
         </section>
 

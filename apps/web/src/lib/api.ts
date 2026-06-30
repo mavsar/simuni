@@ -15,16 +15,29 @@ type ReservationsResponse = { reservations: Reservation[] };
 
 const TOKEN_KEY = 'simuni_token';
 
+/** Returns the stored token regardless of which storage it lives in. */
 export function getToken(): string | null {
-  return localStorage.getItem(TOKEN_KEY);
+  return localStorage.getItem(TOKEN_KEY) ?? sessionStorage.getItem(TOKEN_KEY);
 }
 
-export function setToken(token: string): void {
-  localStorage.setItem(TOKEN_KEY, token);
+/**
+ * Persist the token.
+ * @param remember `true` → localStorage (survives browser restart);
+ *                 `false` → sessionStorage (cleared when the tab/browser closes).
+ */
+export function setToken(token: string, remember: boolean): void {
+  if (remember) {
+    localStorage.setItem(TOKEN_KEY, token);
+    sessionStorage.removeItem(TOKEN_KEY);
+  } else {
+    sessionStorage.setItem(TOKEN_KEY, token);
+    localStorage.removeItem(TOKEN_KEY);
+  }
 }
 
 export function clearToken(): void {
   localStorage.removeItem(TOKEN_KEY);
+  sessionStorage.removeItem(TOKEN_KEY);
 }
 
 /** Broadcast so the auth provider can drop the session when the token is rejected. */
