@@ -50,3 +50,20 @@ Or with Docker:
 ```bash
 docker compose up --build
 ```
+
+## Deploy on CasaOS
+
+A CasaOS AppStore-style package lives in [`casaos/Apps/Simuni`](casaos/Apps/Simuni).
+It pulls a pinned image from GHCR (`ghcr.io/mavsar/simuni`) and persists data in
+`/DATA/AppData/simuni/data`.
+
+Quick install: open CasaOS → **App Store** → **Custom Install**, then paste the
+contents of [`casaos/Apps/Simuni/docker-compose.yml`](casaos/Apps/Simuni/docker-compose.yml).
+
+A default admin (`admin` / `admin`) is seeded on first run — change it from the
+Družine page right after logging in. See the
+[package README](casaos/Apps/Simuni/README.md) for full details.
+
+Container images are published automatically to GHCR by the
+[`publish-ghcr`](.github/workflows/publish-ghcr.yml) workflow whenever a `v*` tag
+is pushed.

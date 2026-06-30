@@ -1,0 +1,60 @@
+name: simuni
+services:
+  simuni:
+    image: ghcr.io/mavsar/simuni:v1.0.0
+    pull_policy: always
+    container_name: simuni
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      DATABASE_PATH: /app/data/simuni.db
+    ports:
+      - target: 3000
+        published: "3000"
+        protocol: tcp
+    volumes:
+      - type: bind
+        source: /DATA/AppData/$AppID/data
+        target: /app/data
+    restart: unless-stopped
+    x-casaos:
+      ports:
+        - container: "3000"
+          description:
+            en_US: Simuni web UI.
+      volumes:
+        - container: /app/data
+          description:
+            en_US: Persistent storage for the SQLite database.
+
+x-casaos:
+  architectures:
+    - amd64
+    - arm64
+    - arm
+  main: simuni
+  author: Primoz
+  category: Utilities
+  description:
+    en_US: Self-hosted reservation app for families sharing a holiday home. Manage availability, families, members, and bookings.
+  developer: Primoz
+  icon: https://raw.githubusercontent.com/mavsar/simuni/main/casaos/Apps/Simuni/icon.png
+  screenshot_link: []
+  tagline:
+    en_US: Self-hosted family reservation planner for CasaOS.
+  thumbnail: ""
+  tips:
+    before_install:
+      en_US: |
+        This package pulls a pinned image tag from GHCR.
+        Bump the tag in `image: ghcr.io/mavsar/simuni:vX.Y.Z` when you want to upgrade.
+
+        A default admin is seeded on first run:
+        - username: `admin`
+        - password: `admin`
+
+        Change these credentials from the Družine page right after the first login.
+  title:
+    en_US: Simuni
+  index: /
+  port_map: "3000"
