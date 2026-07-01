@@ -2,6 +2,7 @@ import { Home, Pencil, Plus, ShieldCheck, Trash2 } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
 
 import { MembersManager } from '../components/MembersManager';
+import { AlertBox, Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Combobox, type ComboboxOption } from '../components/ui/Combobox';
 import { Input } from '../components/ui/Input';
@@ -114,9 +115,9 @@ export function FamiliesPage({ currentUserId }: FamiliesPageProps) {
 
   return (
     <div className="mx-auto w-full max-w-5xl">
-      <div className="mb-5 flex items-center justify-between">
+      <div className="mb-4 flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-semibold text-white drop-shadow-sm">Družine</h2>
+          <h2 className="mb-1 text-xl font-semibold text-white drop-shadow-sm">Družine</h2>
           <p className="text-sm text-white/80 drop-shadow-sm">
             Upravljanje družin in njihovih članov.
           </p>
@@ -126,26 +127,18 @@ export function FamiliesPage({ currentUserId }: FamiliesPageProps) {
         </Button>
       </div>
 
-      {error && (
-        <div className="mb-4 rounded-xl bg-red-50 px-4 py-2 text-sm font-medium text-red-700 ring-1 ring-red-200">
-          {error}
-        </div>
-      )}
+      {error && <AlertBox className="mb-4">{error}</AlertBox>}
 
       {loading ? (
-        <p className="rounded-2xl bg-white/90 p-6 text-center text-sm text-brand/70 ring-1 ring-brand/10">
-          Nalagam…
-        </p>
+        <Card className="text-center text-sm text-brand/70">Nalagam…</Card>
       ) : families.length === 0 ? (
-        <p className="rounded-2xl bg-white/90 p-6 text-center text-sm text-brand/70 ring-1 ring-brand/10">
-          Ni družin.
-        </p>
+        <Card className="text-center text-sm text-brand/70">Ni družin.</Card>
       ) : (
         <div className="grid gap-4 lg:grid-cols-2">
           {families.map((family) => (
-            <div
+            <Card
               key={family.id}
-              className="flex flex-col rounded-2xl bg-white/90 p-5 shadow-sm ring-1 ring-brand/10 backdrop-blur-sm"
+              className="flex flex-col"
             >
               <div className="mb-4 flex items-start justify-between gap-3 border-b border-brand/10 pb-4">
                 <div className="min-w-0">
@@ -199,7 +192,7 @@ export function FamiliesPage({ currentUserId }: FamiliesPageProps) {
                 onPersonsChange={(next) => saveMembers(family, next, family.cars.map(toCarInput))}
                 onCarsChange={(next) => saveMembers(family, family.persons.map(toPersonInput), next)}
               />
-            </div>
+            </Card>
           ))}
         </div>
       )}

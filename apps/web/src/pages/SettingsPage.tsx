@@ -2,6 +2,7 @@ import { CalendarDays, Plus, Save, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 import { Button } from '../components/ui/Button';
+import { AlertBox, Card, CardRow } from '../components/ui/Card';
 import { DateRangePicker, type DateRange } from '../components/ui/DateRangePicker';
 import { Input } from '../components/ui/Input';
 import { Label } from '../components/ui/Label';
@@ -110,7 +111,7 @@ function SeasonPeriodPicker({
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="flex w-full items-center gap-2 whitespace-nowrap rounded-xl border border-brand/20 bg-white px-3 py-2 text-left text-sm text-brand-dark outline-none transition-colors hover:border-brand/50 focus-visible:border-brand focus-visible:ring-2 focus-visible:ring-brand/30"
+        className="flex w-full items-center gap-2 whitespace-nowrap rounded-xl border border-brand/20 bg-transparent px-3 py-2 text-left text-sm text-brand-dark outline-none transition-colors hover:border-brand/50 focus-visible:border-brand focus-visible:ring-2 focus-visible:ring-brand/30"
       >
         <CalendarDays size={15} className="shrink-0 text-brand" aria-hidden />
         <span className={from || to ? '' : 'text-brand/50'}>{label}</span>
@@ -294,7 +295,7 @@ export function SettingsPage({ settings, onSave, isAdmin = false }: SettingsPage
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-4">
-        <section className="rounded-2xl bg-white/90 p-5 shadow-sm ring-1 ring-brand/10 backdrop-blur-sm sm:p-6">
+        <Card as="section">
           <h3 className="mb-4 text-base font-semibold text-brand-dark">Pavšal</h3>
           {!readOnly && (
             <div className="grid gap-5 sm:grid-cols-3">
@@ -347,7 +348,7 @@ export function SettingsPage({ settings, onSave, isAdmin = false }: SettingsPage
             className={
               readOnly
                 ? 'grid grid-cols-2 gap-x-4 gap-y-4 sm:grid-cols-4'
-                : 'mt-5 grid gap-5 rounded-xl bg-sky/70 px-0 py-4 sm:grid-cols-3'
+                : 'mt-5 grid gap-5 rounded-xl px-0 py-4 sm:grid-cols-3'
             }
           >
             <div>
@@ -377,9 +378,9 @@ export function SettingsPage({ settings, onSave, isAdmin = false }: SettingsPage
               </dd>
             </div>
           </dl>
-        </section>
+        </Card>
 
-        <section className="rounded-2xl bg-white/90 p-5 shadow-sm ring-1 ring-brand/10 backdrop-blur-sm sm:p-6">
+        <Card as="section">
           <div className="mb-1 flex items-center justify-between gap-3">
             <h3 className="text-base font-semibold text-brand-dark">Cene po sezonah</h3>
             {!readOnly && (
@@ -402,10 +403,7 @@ export function SettingsPage({ settings, onSave, isAdmin = false }: SettingsPage
               {readOnly && (
                 <div className="space-y-2 sm:hidden">
                   {seasons.map((season, index) => (
-                    <div
-                      key={season.id ?? `new-${index}`}
-                      className="overflow-hidden rounded-xl border border-brand/10 bg-white"
-                    >
+                    <CardRow key={season.id ?? `new-${index}`}>
                       <div className="flex items-center justify-between px-3 py-2.5">
                         <span className="font-medium text-brand-dark">
                           {`${formatMonthDay(season.startMonth, season.startDay)} – ${formatMonthDay(season.endMonth, season.endDay)}`}
@@ -428,7 +426,7 @@ export function SettingsPage({ settings, onSave, isAdmin = false }: SettingsPage
                           </div>
                         ))}
                       </div>
-                    </div>
+                    </CardRow>
                   ))}
                 </div>
               )}
@@ -519,13 +517,9 @@ export function SettingsPage({ settings, onSave, isAdmin = false }: SettingsPage
               </div>
             </>
           )}
-        </section>
+        </Card>
 
-        {!readOnly && error && (
-          <p className="rounded-xl bg-red-50 px-3 py-2 text-sm font-medium text-red-700 ring-1 ring-red-200">
-            {error}
-          </p>
-        )}
+        {!readOnly && error && <AlertBox>{error}</AlertBox>}
 
         {!readOnly && (
           <div className="flex items-center gap-3">

@@ -6,6 +6,7 @@ import { ID_TYPE_LABEL } from '../lib/idTypes';
 import type { CarInput, PersonInput } from '../lib/types';
 import { CarFormModal } from './CarFormModal';
 import { PersonFormModal } from './PersonFormModal';
+import { CardItem, CardSection } from './ui/Card';
 import { Button } from './ui/Button';
 import { Label } from './ui/Label';
 
@@ -60,7 +61,7 @@ export function MembersManager({
       {error && <p className="text-sm font-medium text-red-600">{error}</p>}
 
       {/* Persons */}
-      <div className="space-y-2 rounded-xl bg-sky/50">
+      <CardSection className="space-y-2">
         <div className="flex items-center justify-between">
           <span className="flex items-center gap-1.5 text-sm font-medium text-brand-dark">
             <Users size={15} className="text-brand" />
@@ -85,9 +86,10 @@ export function MembersManager({
             {persons.map((person, index) => {
               const age = computeAge(person.birthday);
               return (
-                <li
+                <CardItem
+                  as="li"
                   key={index}
-                  className="flex items-center gap-2 rounded-lg bg-white p-3 shadow-sm ring-1 ring-brand/10"
+                  className="flex items-center gap-2"
                 >
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-1.5">
@@ -125,15 +127,15 @@ export function MembersManager({
                     title="Odstrani osebo"
                     onClick={() => void removePerson(index)}
                   />
-                </li>
+                </CardItem>
               );
             })}
           </ul>
         )}
-      </div>
+      </CardSection>
 
       {/* Cars */}
-      <div className="space-y-2 rounded-xl bg-sky/50">
+      <CardSection className="space-y-2">
         <div className="flex items-center justify-between">
           <span className="flex items-center gap-1.5 text-sm font-medium text-brand-dark">
             <Car size={15} className="text-brand" />
@@ -156,9 +158,10 @@ export function MembersManager({
         ) : (
           <ul className="space-y-2">
             {cars.map((car, index) => (
-              <li
+              <CardItem
+                as="li"
                 key={index}
-                className="flex items-center gap-2 rounded-lg bg-white p-3 shadow-sm ring-1 ring-brand/10"
+                className="flex items-center gap-2"
               >
                 <div className="flex-1">
                   <span className="font-medium text-brand-dark">{car.name}</span>
@@ -186,11 +189,11 @@ export function MembersManager({
                   title="Odstrani avto"
                   onClick={() => void removeCar(index)}
                 />
-              </li>
+              </CardItem>
             ))}
           </ul>
         )}
-      </div>
+      </CardSection>
 
       {personEditor && (
         <PersonFormModal

@@ -88,6 +88,7 @@ body {
 
 /* ── react-day-picker brand theme (range picker) ── */
 .rdp-simuni.rdp-root {
+  --rdp-background-color: transparent;
   --rdp-accent-color: var(--color-brand);
   --rdp-accent-background-color: var(--color-sky);
   --rdp-range_middle-background-color: var(--color-sky);

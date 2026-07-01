@@ -12,6 +12,7 @@ import {
 import { Fragment, useEffect, useMemo, useState } from 'react';
 
 import { Calendar } from '../components/Calendar';
+import { AlertBox, Card, CardRow, CardSection } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Combobox, type ComboboxOption } from '../components/ui/Combobox';
 import { DateRangePicker, type DateRange } from '../components/ui/DateRangePicker';
@@ -185,7 +186,7 @@ function ReservationBreakdown({
   const pausal = attendees.filter((a) => a.person.naPausalu);
 
   return (
-    <div className="space-y-4 rounded-xl bg-sky/50 py-4 text-xs text-brand-dark">
+    <CardSection className="space-y-4 py-4 text-xs text-brand-dark">
       <div>
         <p className="mb-1.5 font-semibold uppercase tracking-wide text-brand/60">Osebe</p>
         <div className="flex flex-wrap gap-1.5">
@@ -240,7 +241,7 @@ function ReservationBreakdown({
       </div>
 
       <dl className="grid gap-2 sm:grid-cols-3">
-        <div className="rounded-lg bg-white p-2.5 ring-1 ring-brand/10">
+        <div className="rounded-xl bg-white p-2.5 ring-1 ring-brand/10">
           <dt className="text-[10px] uppercase tracking-wide text-brand/60">Za plačati Šimuni</dt>
           <dd className="font-semibold">{formatEur(simuni)}</dd>
           <p className="mt-0.5 text-[11px] text-brand/60">
@@ -248,14 +249,14 @@ function ReservationBreakdown({
             {touristTax > 0 && ` (${formatEur(touristTax)}/osebo/noč)`}
           </p>
         </div>
-        <div className="rounded-lg bg-white p-2.5 ring-1 ring-brand/10">
+        <div className="rounded-xl bg-white p-2.5 ring-1 ring-brand/10">
           <dt className="text-[10px] uppercase tracking-wide text-brand/60">Za plačati bungalov</dt>
           <dd className="font-semibold">{formatEur(bungalov)}</dd>
           <p className="mt-0.5 text-[11px] text-brand/60">
             Sezonsko utežena najemnina, deljena med družine.
           </p>
         </div>
-        <div className="rounded-lg bg-white p-2.5 ring-1 ring-brand/10">
+        <div className="rounded-xl bg-white p-2.5 ring-1 ring-brand/10">
           <dt className="text-[10px] uppercase tracking-wide text-brand/60">Skupaj</dt>
           <dd className="font-semibold text-brand">{formatEur(total)}</dd>
         </div>
@@ -268,7 +269,7 @@ function ReservationBreakdown({
           vse prisotne.
         </p>
       )}
-    </div>
+    </CardSection>
   );
 }
 
@@ -755,7 +756,7 @@ export function AvailabilityPage({
 
   return (
     <div className="mx-auto w-full max-w-5xl space-y-4">
-      <section className="rounded-2xl bg-white/90 p-5 shadow-sm ring-1 ring-brand/10 backdrop-blur-sm">
+      <Card as="section">
         <div className="mb-3 flex items-center justify-between gap-3">
           <h2 className="text-lg font-semibold text-brand-dark">
             {isAdmin ? 'Vse rezervacije' : 'Moje rezervacije'}
@@ -811,10 +812,7 @@ export function AvailabilityPage({
               {filteredLines.map(({ reservation, days, breakdown }) => {
                 const expanded = expandedId === reservation.id;
                 return (
-                  <div
-                    key={reservation.id}
-                    className="overflow-hidden rounded-xl border border-brand/10 bg-white"
-                  >
+                  <CardRow key={reservation.id}>
                     <div className="flex items-start justify-between gap-2 px-3 py-3">
                       <div>
                         <p className="font-medium text-brand-dark">
@@ -889,7 +887,7 @@ export function AvailabilityPage({
                         />
                       </div>
                     )}
-                  </div>
+                  </CardRow>
                 );
               })}
 
@@ -936,7 +934,7 @@ export function AvailabilityPage({
                     const expanded = expandedId === reservation.id;
                     return (
                       <Fragment key={reservation.id}>
-                        <tr className="align-top">
+                        <tr className="align-middle">
                           <td className="py-2.5 pr-3">
                             <p className="font-medium text-brand-dark">
                               {formatDayRange(reservation.startDay, reservation.endDay)}
@@ -1028,7 +1026,7 @@ export function AvailabilityPage({
             </div>
           </>
         )}
-      </section>
+      </Card>
 
       <Calendar
         reservations={reservations}
@@ -1093,9 +1091,7 @@ export function AvailabilityPage({
         <div className="mb-4">
           <span className="mb-1.5 block text-sm font-medium text-brand-dark">Kdo prihaja?</span>
           {availablePersons.length === 0 ? (
-            <p className="rounded-xl bg-sky/70 p-3 text-sm text-brand/70">
-              Ta družina še nima dodanih oseb.
-            </p>
+            <AlertBox variant="info">Ta družina še nima dodanih oseb.</AlertBox>
           ) : (
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               {availablePersons.map((person) => {
@@ -1135,9 +1131,7 @@ export function AvailabilityPage({
         <div className="mb-4">
           <span className="mb-1.5 block text-sm font-medium text-brand-dark">S katerimi avtomobili prihajate?</span>
           {availableCars.length === 0 ? (
-            <p className="rounded-xl bg-sky/70 p-3 text-sm text-brand/70">
-              Ta družina še nima dodanih avtomobilov.
-            </p>
+            <AlertBox variant="info">Ta družina še nima dodanih avtomobilov.</AlertBox>
           ) : (
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
               {availableCars.map((car) => {
@@ -1186,7 +1180,7 @@ export function AvailabilityPage({
         </div>
 
         {selectionEstimate ? (
-          <div className="mt-4 space-y-4 rounded-xl bg-sky/70 p-4 text-sm">
+          <CardSection shade="medium" className="mt-4 space-y-4 text-sm">
             {/* Header */}
             <div className="flex items-center justify-between">
               <span className="font-medium text-brand-dark">{selectionEstimate.label}</span>
@@ -1223,7 +1217,7 @@ export function AvailabilityPage({
               {selectionEstimate.seasonGroups.map((group, i) => (
                 <div
                   key={i}
-                  className="flex items-start justify-between rounded-lg bg-white/60 px-3 py-2 text-xs"
+                  className="flex items-start justify-between rounded-xl bg-white/60 px-3 py-2 text-xs"
                 >
                   <div className="leading-relaxed">
                     <span className="font-medium text-brand-dark">
@@ -1255,7 +1249,7 @@ export function AvailabilityPage({
                 <p className="text-[10px] font-semibold uppercase tracking-wide text-brand/50">
                   Šimuni
                 </p>
-                <div className="rounded-lg bg-white/60 px-3 py-2 text-xs space-y-1">
+                <div className="rounded-xl bg-white/60 px-3 py-2 text-xs space-y-1">
                   {selectionEstimate.seasonGroups.length > 1
                     ? selectionEstimate.seasonGroups.map((group, gi) =>
                         group.personRows.length > 0 ? (
@@ -1340,18 +1334,12 @@ export function AvailabilityPage({
                 Bungalov se deli med vse družine prisotne ta dan.
               </p>
             </div>
-          </div>
+        </CardSection>
         ) : (
-          <p className="mt-4 rounded-xl bg-sky/70 p-3 text-sm text-brand/70">
-            Izberi obdobje za oceno cene.
-          </p>
+          <AlertBox variant="info" className="mt-4">Izberi obdobje za oceno cene.</AlertBox>
         )}
 
-        {formError && (
-          <p className="mt-3 rounded-xl bg-red-50 px-3 py-2 text-sm font-medium text-red-700 ring-1 ring-red-200">
-            {formError}
-          </p>
-        )}
+        {formError && <AlertBox className="mt-3">{formError}</AlertBox>}
       </Modal>
     </div>
   );

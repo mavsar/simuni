@@ -1,5 +1,5 @@
 import { Baby, ChevronLeft, ChevronRight, User as UserIcon } from 'lucide-react';
-import { Fragment, useMemo, useState, type ReactNode } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 
 import {
   SL_MONTHS,
@@ -14,6 +14,7 @@ import {
 import type { Reservation } from '../lib/types';
 import { cn } from '../lib/utils';
 import { Button } from './ui/Button';
+import { Card } from './ui/Card';
 import { Tooltip } from './ui/Tooltip';
 
 export type CalendarProps = {
@@ -99,6 +100,22 @@ export function Calendar({
   const [viewYear, setViewYear] = useState(today.getFullYear());
   const [viewMonth, setViewMonth] = useState(today.getMonth());
 
+  // Measure the grid's actual cell width so every cell has min-height = width (square minimum).
+  const gridRef = useRef<HTMLDivElement>(null);
+  const [cellMinHeight, setCellMinHeight] = useState(0);
+  useEffect(() => {
+    const el = gridRef.current;
+    if (!el) return;
+    const update = () => {
+      const gapPx = parseFloat(getComputedStyle(el).columnGap) || 0;
+      setCellMinHeight(Math.floor((el.clientWidth - 6 * gapPx) / 7));
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   const dayInfo = useMemo(() => {
     const map = new Map<string, Map<number, FamilyGroup>>();
     for (const reservation of reservations) {
@@ -169,7 +186,7 @@ export function Calendar({
   }
 
   return (
-    <div className="rounded-2xl bg-white/90 p-4 shadow-sm ring-1 ring-brand/10 backdrop-blur-sm sm:p-6">
+    <Card>
       <div className="mb-4 flex items-center justify-between">
         <Button
           variant="transparent"
@@ -205,10 +222,12 @@ export function Calendar({
         ))}
       </div>
 
-      <div className="grid grid-cols-7 gap-1.5">
+      <div ref={gridRef} className="grid grid-cols-7 gap-1.5">
         {cells.map((cell, index) => {
+          const squareStyle = cellMinHeight > 0 ? { minHeight: cellMinHeight } : undefined;
+
           if (!cell) {
-            return <div key={`empty-${index}`} aria-hidden />;
+            return <div key={`empty-${index}`} style={squareStyle} aria-hidden />;
           }
 
           const info = dayInfo.get(cell.key);
@@ -225,52 +244,54 @@ export function Calendar({
                 ? familyCountLabel(familiesCount)
                 : (info.groups[0]?.family ?? '');
 
-            const divider = <span className="my-0.5 h-px w-3/4 bg-current opacity-25" aria-hidden />;
+            const divider = <span className="my-2 h-px w-full bg-current opacity-10" aria-hidden />;
+            const fullDivider = <span className="my-2 h-px w-full bg-current opacity-10" aria-hidden />;
 
             const content = (
               <>
-                {familiesCount > 1 && (
-                  <span className="absolute right-1 top-0.5 rounded-full bg-black/10 px-1 text-[9px] font-bold leading-tight">
-                    {familiesCount}×
-                  </span>
-                )}
-                <span className="font-semibold leading-none">{cell.date.getDate()}</span>
+                {/* Day number pinned to top */}
+                <span className="w-full pt-0.5 text-center font-semibold leading-none">
+                  {cell.date.getDate()}
+                </span>
                 {divider}
-                {info.groups.map((group, groupIndex) => (
-                  <Fragment key={group.userId}>
-                    {groupIndex > 0 && divider}
-                    <span className="flex w-full flex-col items-center gap-0.5 leading-tight">
-                      <span className="w-full truncate px-0.5 text-center text-[10px] font-medium">
-                        {group.family}
+                {/* Group info — each family gets an equal slot, content centred within it */}
+                <span className="flex w-full flex-1 flex-col">
+                  {info.groups.map((group, groupIndex) => (
+                    <Fragment key={group.userId}>
+                      {groupIndex > 0 && fullDivider}
+                      <span className="flex flex-1 w-full flex-col items-center justify-center gap-0.5 leading-tight">
+                        <span className="w-full truncate px-0.5 text-center text-[10px] font-medium">
+                          {group.family}
+                        </span>
+                        {(group.adults > 0 || group.children > 0) && (
+                          <Tooltip content={attendeesTooltip(group.attendees)}>
+                            <span className="inline-flex cursor-default items-center justify-center gap-1 text-[10px] font-medium">
+                              {group.adults > 0 && (
+                                <span className="inline-flex items-center gap-0.5">
+                                  <UserIcon size={11} aria-hidden />
+                                  {group.adults}
+                                </span>
+                              )}
+                              {group.children > 0 && (
+                                <span className="inline-flex items-center gap-0.5">
+                                  <Baby size={11} aria-hidden />
+                                  {group.children}
+                                </span>
+                              )}
+                            </span>
+                          </Tooltip>
+                        )}
+                        <span className="text-[10px] font-medium">{formatPrice(share)}</span>
                       </span>
-                      {(group.adults > 0 || group.children > 0) && (
-                        <Tooltip content={attendeesTooltip(group.attendees)}>
-                          <span className="inline-flex cursor-default items-center justify-center gap-1 text-[10px] font-medium">
-                            {group.adults > 0 && (
-                              <span className="inline-flex items-center gap-0.5">
-                                <UserIcon size={11} aria-hidden />
-                                {group.adults}
-                              </span>
-                            )}
-                            {group.children > 0 && (
-                              <span className="inline-flex items-center gap-0.5">
-                                <Baby size={11} aria-hidden />
-                                {group.children}
-                              </span>
-                            )}
-                          </span>
-                        </Tooltip>
-                      )}
-                      <span className="text-[10px] font-medium">{formatPrice(share)}</span>
-                    </span>
-                  </Fragment>
-                ))}
+                    </Fragment>
+                  ))}
+                </span>
               </>
             );
 
             const colorClasses = mine
               ? 'border-brand bg-brand text-white shadow-sm'
-              : 'border-sand bg-sand/70 text-brand-dark/80';
+              : 'border-sand bg-sand/70 text-brand-dark';
 
             if (target) {
               return (
@@ -279,8 +300,9 @@ export function Calendar({
                   type="button"
                   onClick={() => onEditReservation(target)}
                   title={`Uredi rezervacijo${ownerLabel ? ` – ${ownerLabel}` : ''}`}
+                  style={squareStyle}
                   className={cn(
-                    'group relative flex aspect-square flex-col items-center justify-center gap-0.5 rounded-xl border p-1 text-sm transition-all',
+                    'group relative flex flex-col items-center gap-0.5 rounded-xl border p-2 text-sm transition-all',
                     colorClasses,
                     mine ? 'hover:bg-brand-dark' : 'hover:border-brand/40 hover:brightness-105',
                     isToday && (mine ? 'ring-2 ring-white/70' : 'ring-2 ring-brand/40')
@@ -295,8 +317,9 @@ export function Calendar({
               <div
                 key={cell.key}
                 title={`Zasedeno${ownerLabel ? ` – ${ownerLabel}` : ''}`}
+                style={squareStyle}
                 className={cn(
-                  'relative flex aspect-square flex-col items-center justify-center gap-0.5 rounded-xl border p-1 text-sm',
+                  'relative flex flex-col items-center gap-0.5 rounded-xl border p-1 text-sm',
                   colorClasses,
                   isToday && (mine ? 'ring-2 ring-white/70' : 'ring-2 ring-brand/40')
                 )}
@@ -309,8 +332,9 @@ export function Calendar({
           return (
             <div
               key={cell.key}
+              style={squareStyle}
               className={cn(
-                'relative flex aspect-square flex-col items-center justify-center rounded-xl border border-transparent bg-sky/60 text-sm text-brand-dark',
+                'relative flex flex-col items-center justify-center rounded-xl border border-transparent bg-sky/80 text-sm text-brand-dark',
                 isToday && 'ring-2 ring-brand/40'
               )}
             >
@@ -319,6 +343,6 @@ export function Calendar({
           );
         })}
       </div>
-    </div>
+    </Card>
   );
 }

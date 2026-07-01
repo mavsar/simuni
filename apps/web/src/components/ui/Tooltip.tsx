@@ -43,7 +43,7 @@ export function Tooltip({
             sideOffset={6}
             collisionPadding={8}
             className={cn(
-              'z-[60] max-w-xs rounded-lg bg-brand-dark px-2.5 py-1.5 text-xs font-medium text-white shadow-lg',
+              'z-[60] max-w-xs rounded-xl bg-brand-dark px-2.5 py-1.5 text-xs font-medium text-white shadow-lg',
               'data-[state=delayed-open]:animate-in data-[state=delayed-open]:fade-in-0 data-[state=delayed-open]:zoom-in-95',
               className
             )}

@@ -38,7 +38,7 @@ export function MyProfilePage() {
   return (
     <div className="mx-auto w-full max-w-2xl">
       <div className="mb-5">
-        <h2 className="flex items-center gap-2 text-xl font-semibold text-white drop-shadow-sm">
+        <h2 className="mb-1 flex items-center gap-2 text-xl font-semibold text-white drop-shadow-sm">
           <UserRound size={20} />
           Moj profil
         </h2>

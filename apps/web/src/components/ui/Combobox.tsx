@@ -81,7 +81,7 @@ export function Combobox<T extends string | number>({
         aria-label={ariaLabel}
         onClick={() => setOpen((prev) => !prev)}
         className={cn(
-          'flex w-full items-center gap-2 rounded-xl border border-brand/20 bg-white px-3 py-2 text-left text-sm text-brand-dark outline-none transition-colors hover:border-brand/50 focus-visible:border-brand focus-visible:ring-2 focus-visible:ring-brand/30 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:border-brand/20',
+          'flex w-full items-center gap-2 rounded-xl border border-brand/20 bg-transparent px-3 py-2 text-left text-sm text-brand-dark outline-none transition-colors hover:border-brand/50 focus-visible:border-brand focus-visible:ring-2 focus-visible:ring-brand/30 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:border-brand/20',
           open && 'border-brand ring-2 ring-brand/30'
         )}
       >
@@ -115,7 +115,7 @@ export function Combobox<T extends string | number>({
                     setOpen(false);
                   }}
                   className={cn(
-                    'flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm transition-colors',
+                    'flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-sm transition-colors',
                     isSelected
                       ? 'bg-brand text-white'
                       : 'text-brand-dark hover:bg-sky'

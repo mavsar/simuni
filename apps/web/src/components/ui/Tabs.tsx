@@ -54,7 +54,7 @@ const tabVariants = cva(
         ],
         pill: 'rounded-full px-4 py-1.5 text-white/85 hover:text-white data-[active=true]:bg-white data-[active=true]:text-brand data-[active=true]:shadow-sm',
         solid:
-          'rounded-lg px-4 py-1.5 text-brand-dark/70 hover:text-brand-dark data-[active=true]:bg-brand data-[active=true]:text-white',
+          'rounded-xl px-4 py-1.5 text-brand-dark/70 hover:text-brand-dark data-[active=true]:bg-brand data-[active=true]:text-white',
       },
       size: {
         sm: 'text-xs',

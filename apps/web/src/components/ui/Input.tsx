@@ -11,7 +11,7 @@ export type InputProps = ComponentProps<'input'> & {
 };
 
 const baseFieldClass =
-  'w-full rounded-xl border border-brand/20 bg-white px-3 py-2 text-sm text-brand-dark outline-none transition-colors hover:border-brand/50 focus-visible:border-brand focus-visible:ring-2 focus-visible:ring-brand/30 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:border-brand/20';
+  'w-full rounded-xl border border-brand/20 bg-transparent px-3 py-2 text-sm text-brand-dark outline-none transition-colors hover:border-brand/50 focus-visible:border-brand focus-visible:ring-2 focus-visible:ring-brand/30 disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:border-brand/20';
 
 /**
  * Shared text input styled to match the Combobox. Pass an optional `icon` to

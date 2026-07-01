@@ -8,7 +8,7 @@ import type { ComponentProps, ReactNode } from 'react';
  * Concrete classes for each combination live in `compoundVariants`.
  */
 const labelVariants = cva(
-  'inline-flex items-center gap-1 rounded-md font-medium whitespace-nowrap',
+  'inline-flex items-center gap-1 rounded-xl font-medium whitespace-nowrap',
   {
     variants: {
       color: {
