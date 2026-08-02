@@ -118,7 +118,7 @@ export type AvailabilityPageProps = {
   reservations: Reservation[];
   occupiedDays: Set<string>;
   currentUserId: number;
-  /** Admins see and can edit every reservation, including past ones. */
+  /** Admins see and can edit every reservation, regardless of owner. */
   isAdmin?: boolean;
   onCreateReservation: (input: ReservationRangeInput) => Promise<void>;
   onUpdateReservation: (id: number, input: ReservationRangeInput) => Promise<void>;
@@ -1172,7 +1172,7 @@ export function AvailabilityPage({
             value={range}
             onChange={setRange}
             disabledDays={disabledDays}
-            disablePast={!isAdmin}
+            disablePast={false}
             defaultMonth={range?.from}
             numberOfMonths={2}
             occupancy={modalOccupancy}
