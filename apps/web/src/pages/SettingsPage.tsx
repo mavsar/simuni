@@ -139,6 +139,7 @@ function SeasonPeriodPicker({
             disablePast={false}
             defaultMonth={from ?? new Date(REF_YEAR, 0, 1)}
             numberOfMonths={2}
+            formatFieldLabel={(date) => `${date.getDate()}. ${date.getMonth() + 1}.`}
           />
         </div>
       </Modal>
