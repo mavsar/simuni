@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { api } from '../lib/api';
-import { eachDayKeyInRange } from '../lib/dates';
+import { eachNightKeyInRange } from '../lib/dates';
 import type { Reservation, ReservationRangeInput, Settings } from '../lib/types';
 
 export type AppData = {
   settings: Settings;
   reservations: Reservation[];
-  /** Union of all reserved days across every reservation. */
+  /** Union of all reserved nights (by start date) across every reservation. */
   occupiedDays: Set<string>;
   loading: boolean;
   error: string | null;
@@ -22,6 +22,8 @@ export function useAppData(): AppData {
     pausalPrice: 0,
     oneoffDiscountPercent: 0,
     touristTax: 0,
+    accommodationFee: 0,
+    touristTaxExemptAge: 0,
     seasons: []
   });
   const [reservations, setReservations] = useState<Reservation[]>([]);
@@ -60,7 +62,7 @@ export function useAppData(): AppData {
   const occupiedDays = useMemo(() => {
     const days = new Set<string>();
     for (const reservation of reservations) {
-      for (const day of eachDayKeyInRange(reservation.startDay, reservation.endDay)) {
+      for (const day of eachNightKeyInRange(reservation.startDay, reservation.endDay)) {
         days.add(day);
       }
     }

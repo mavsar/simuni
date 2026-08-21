@@ -30,6 +30,10 @@ export type Settings = {
   oneoffDiscountPercent: number;
   /** Tourist tax charged per attendee per night. */
   touristTax: number;
+  /** One-time accommodation payment, charged per attendee once per reservation. */
+  accommodationFee: number;
+  /** Persons younger than this many whole years don't pay tourist tax. */
+  touristTaxExemptAge: number;
   /** Per-person nightly price tiers across the year. */
   seasons: Season[];
 };

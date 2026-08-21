@@ -1,4 +1,4 @@
-import { computeAge, eachDayKeyInRange, parseDayKey } from './dates';
+import { computeAge, eachNightKeyInRange, parseDayKey } from './dates';
 import type { Person, Season, Settings } from './types';
 
 export type PricingSummary = {
@@ -179,15 +179,35 @@ export type SimuniCharge = {
   personsTotal: number;
   /** Tourist tax for all attendees across all nights. */
   taxTotal: number;
-  /** What the family owes Šimuni camp: persons + tax. */
+  /** One-time accommodation payment, charged once per attendee (not per night). */
+  accommodationTotal: number;
+  /** What the family owes Šimuni camp: persons + tax + accommodation payment. */
   total: number;
 };
 
+/** One-time accommodation payment for a reservation: charged once per attendee. */
+export function accommodationFeeTotal(settings: Settings, personsCount: number): number {
+  return personsCount * settings.accommodationFee;
+}
+
+/** Whether a person is too young to owe tourist tax, per {@link Settings.touristTaxExemptAge}. */
+export function isTouristTaxExempt(settings: Settings, birthday: string): boolean {
+  const age = computeAge(birthday);
+  return age !== null && age < settings.touristTaxExemptAge;
+}
+
+/** How many of the given persons actually owe tourist tax (excludes exempt children). */
+export function touristTaxPayerCount(settings: Settings, persons: Person[]): number {
+  return persons.filter((person) => !isTouristTaxExempt(settings, person.birthday)).length;
+}
+
 /**
  * Computes the amount a reservation owes directly to Šimuni camp: nightly
- * per-person season prices for attendees who are NOT na pavšalu, plus the
- * tourist tax for every attendee. Each day in the inclusive range counts as one
- * night, priced by the season that day falls in.
+ * per-person season prices for attendees who are NOT na pavšalu, the tourist
+ * tax for every attendee old enough to owe it, and the one-time accommodation
+ * payment (charged once per attendee, not per night). Nightly charges are
+ * priced per night stayed (check-out day itself isn't charged), by the season
+ * each night's date falls in.
  */
 export function computeSimuniCharge(
   settings: Settings,
@@ -195,26 +215,34 @@ export function computeSimuniCharge(
   startDay: string,
   endDay: string
 ): SimuniCharge {
-  const days = eachDayKeyInRange(startDay, endDay);
+  const nights = eachNightKeyInRange(startDay, endDay);
   const bands = persons.map((person) => ({
     person,
-    band: ageBand(computeAge(person.birthday))
+    band: ageBand(computeAge(person.birthday)),
+    taxExempt: isTouristTaxExempt(settings, person.birthday)
   }));
 
   let personsTotal = 0;
   let taxTotal = 0;
 
-  for (const dayKey of days) {
+  for (const dayKey of nights) {
     const season = seasonForDay(settings.seasons, dayKey);
-    for (const { person, band } of bands) {
-      taxTotal += settings.touristTax;
+    for (const { person, band, taxExempt } of bands) {
+      if (!taxExempt) taxTotal += settings.touristTax;
       if (!person.naPausalu && season) {
         personsTotal += seasonPriceForBand(season, band);
       }
     }
   }
 
-  return { personsTotal, taxTotal, total: personsTotal + taxTotal };
+  const accommodationTotal = accommodationFeeTotal(settings, persons.length);
+
+  return {
+    personsTotal,
+    taxTotal,
+    accommodationTotal,
+    total: personsTotal + taxTotal + accommodationTotal
+  };
 }
 
 const eurFormatter = new Intl.NumberFormat('sl-SI', {

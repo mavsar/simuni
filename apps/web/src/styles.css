@@ -86,7 +86,10 @@ body {
   scrollbar-color: rgba(16, 85, 181, 0.35) transparent;
 }
 
-/* ── react-day-picker brand theme (range picker) ── */
+/* ── react-day-picker brand theme (range picker) ──
+   Fluid layout: months stretch to fill the container width (2-up on wide
+   screens, stacked on narrow ones) instead of the library's default
+   fixed-pixel day cells. */
 .rdp-simuni.rdp-root {
   --rdp-background-color: transparent;
   --rdp-accent-color: var(--color-brand);
@@ -95,14 +98,40 @@ body {
   --rdp-range_start-date-background-color: var(--color-brand);
   --rdp-range_end-date-background-color: var(--color-brand);
   --rdp-today-color: var(--color-brand);
-  --rdp-day-width: 40px;
-  --rdp-day-height: 40px;
-  --rdp-day_button-width: 38px;
-  --rdp-day_button-height: 38px;
   --rdp-day_button-border-radius: 12px;
   --rdp-months-gap: 1.5rem;
-  margin: 0 auto;
+  width: 100%;
+  margin: 0;
   color: var(--color-ink);
+}
+
+.rdp-simuni .rdp-months {
+  width: 100%;
+  max-width: 100%;
+  flex-wrap: wrap;
+}
+
+.rdp-simuni .rdp-month {
+  flex: 1 1 260px;
+  min-width: 0;
+  width: 100%;
+}
+
+.rdp-simuni .rdp-month_grid {
+  width: 100%;
+  table-layout: fixed;
+}
+
+.rdp-simuni .rdp-weekday,
+.rdp-simuni .rdp-day {
+  width: auto;
+  height: auto;
+}
+
+.rdp-simuni .rdp-day_button {
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1 / 1;
 }
 
 .rdp-simuni .rdp-chevron {

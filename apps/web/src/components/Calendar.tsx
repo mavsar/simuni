@@ -5,7 +5,7 @@ import {
   SL_MONTHS,
   SL_WEEKDAYS_SHORT,
   daysInMonth,
-  eachDayKeyInRange,
+  eachNightKeyInRange,
   isChild,
   isSameDay,
   mondayFirstOffset,
@@ -119,7 +119,7 @@ export function Calendar({
   const dayInfo = useMemo(() => {
     const map = new Map<string, Map<number, FamilyGroup>>();
     for (const reservation of reservations) {
-      for (const day of eachDayKeyInRange(reservation.startDay, reservation.endDay)) {
+      for (const day of eachNightKeyInRange(reservation.startDay, reservation.endDay)) {
         let groups = map.get(day);
         if (!groups) {
           groups = new Map();

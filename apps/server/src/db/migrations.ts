@@ -188,6 +188,22 @@ const migrations: Migration[] = [
 
       CREATE INDEX idx_reservation_cars_reservation ON reservation_cars (reservation_id);
     `
+  },
+  {
+    // One-time per-reservation accommodation payment ("Enkratno plačilo
+    // nastanitve"), charged once per attendee — not per night.
+    name: "0011_accommodation_fee",
+    sql: `
+      ALTER TABLE settings ADD COLUMN accommodation_fee REAL NOT NULL DEFAULT 1.5;
+    `
+  },
+  {
+    // Age below which a person is exempt from tourist tax ("Turistična
+    // taksa"). Persons younger than this many whole years don't pay it.
+    name: "0012_tourist_tax_exempt_age",
+    sql: `
+      ALTER TABLE settings ADD COLUMN tourist_tax_exempt_age INTEGER NOT NULL DEFAULT 12;
+    `
   }
 ];
 

@@ -12,6 +12,8 @@ type SettingsRow = {
   pausal_price: number;
   oneoff_discount_percent: number;
   tourist_tax: number;
+  accommodation_fee: number;
+  tourist_tax_exempt_age: number;
 };
 
 type SeasonRow = {
@@ -30,14 +32,17 @@ type SeasonRow = {
 };
 
 const selectSettings = sqlite.prepare(
-  "SELECT pausal_price, oneoff_discount_percent, tourist_tax FROM settings WHERE id = 1"
+  `SELECT pausal_price, oneoff_discount_percent, tourist_tax, accommodation_fee, tourist_tax_exempt_age
+   FROM settings WHERE id = 1`
 );
 
 const updateSettings = sqlite.prepare(
   `UPDATE settings
    SET pausal_price = @pausalPrice,
        oneoff_discount_percent = @oneoffDiscountPercent,
-       tourist_tax = @touristTax
+       tourist_tax = @touristTax,
+       accommodation_fee = @accommodationFee,
+       tourist_tax_exempt_age = @touristTaxExemptAge
    WHERE id = 1`
 );
 
@@ -82,6 +87,8 @@ function readSettings() {
     pausalPrice: row.pausal_price,
     oneoffDiscountPercent: row.oneoff_discount_percent,
     touristTax: row.tourist_tax,
+    accommodationFee: row.accommodation_fee,
+    touristTaxExemptAge: row.tourist_tax_exempt_age,
     seasons
   };
 }
@@ -103,6 +110,8 @@ const settingsSchema = z.object({
   pausalPrice: z.number().min(0),
   oneoffDiscountPercent: z.number().min(0).max(100),
   touristTax: z.number().min(0),
+  accommodationFee: z.number().min(0),
+  touristTaxExemptAge: z.number().int().min(0),
   seasons: z.array(seasonSchema).default([])
 });
 
@@ -121,7 +130,9 @@ settingsRouter.put("/", (req, res) => {
     updateSettings.run({
       pausalPrice: parsed.data.pausalPrice,
       oneoffDiscountPercent: parsed.data.oneoffDiscountPercent,
-      touristTax: parsed.data.touristTax
+      touristTax: parsed.data.touristTax,
+      accommodationFee: parsed.data.accommodationFee,
+      touristTaxExemptAge: parsed.data.touristTaxExemptAge
     });
 
     deleteSeasons.run();

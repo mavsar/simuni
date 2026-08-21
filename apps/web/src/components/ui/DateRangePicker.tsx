@@ -175,7 +175,7 @@ export function DateRangePicker({
   }
 
   return (
-    <div className={cn('flex flex-col gap-3', className)}>
+    <div className={cn('flex w-full flex-col gap-3', className)}>
       <div className="flex items-center gap-2">
         <DateField
           label="Od"

@@ -30,23 +30,35 @@ export function parseDayKey(key: string): Date {
   return new Date(year, month - 1, day);
 }
 
-/** All day-keys from `startKey` to `endKey` inclusive. */
-export function eachDayKeyInRange(startKey: string, endKey: string): string[] {
+/**
+ * All night-keys for a stay, keyed by the calendar date each night starts on.
+ * `startKey` is check-in, `endKey` is check-out (exclusive) — check-out day
+ * itself isn't a night of the stay.
+ */
+export function eachNightKeyInRange(startKey: string, endKey: string): string[] {
   const keys: string[] = [];
   const cursor = parseDayKey(startKey);
   const last = parseDayKey(endKey);
-  while (cursor <= last) {
+  while (cursor < last) {
     keys.push(toDayKey(cursor));
     cursor.setDate(cursor.getDate() + 1);
   }
   return keys;
 }
 
-/** Inclusive number of days between two day-keys. */
-export function dayCountInRange(startKey: string, endKey: string): number {
+/** Number of nights between check-in (`startKey`) and check-out (`endKey`). */
+export function nightCountInRange(startKey: string, endKey: string): number {
   const start = parseDayKey(startKey).getTime();
   const end = parseDayKey(endKey).getTime();
-  return Math.round((end - start) / 86_400_000) + 1;
+  return Math.round((end - start) / 86_400_000);
+}
+
+/** Slovenian count label for nights stayed, e.g. `1 nočitev`, `2 nočitvi`, `6 nočitev`. */
+export function nightCountLabel(count: number): string {
+  if (count === 1) return '1 nočitev';
+  if (count === 2) return '2 nočitvi';
+  if (count === 3 || count === 4) return `${count} nočitve`;
+  return `${count} nočitev`;
 }
 
 /** Human range label, e.g. `12. 7. – 20. 7. 2026` (Slovenian). */

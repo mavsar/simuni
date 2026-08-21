@@ -132,16 +132,14 @@ function SeasonPeriodPicker({
           Klikni začetni in nato končni dan. Upoštevata se samo dan in mesec — obdobje velja vsako
           leto.
         </p>
-        <div className="flex justify-center">
-          <DateRangePicker
-            value={value}
-            onChange={onChange}
-            disablePast={false}
-            defaultMonth={from ?? new Date(REF_YEAR, 0, 1)}
-            numberOfMonths={2}
-            formatFieldLabel={(date) => `${date.getDate()}. ${date.getMonth() + 1}.`}
-          />
-        </div>
+        <DateRangePicker
+          value={value}
+          onChange={onChange}
+          disablePast={false}
+          defaultMonth={from ?? new Date(REF_YEAR, 0, 1)}
+          numberOfMonths={2}
+          formatFieldLabel={(date) => `${date.getDate()}. ${date.getMonth() + 1}.`}
+        />
       </Modal>
     </>
   );
@@ -160,6 +158,10 @@ export function SettingsPage({ settings, onSave, isAdmin = false }: SettingsPage
   const [pausalPrice, setPausalPrice] = useState(String(settings.pausalPrice));
   const [discount, setDiscount] = useState(String(settings.oneoffDiscountPercent));
   const [touristTax, setTouristTax] = useState(String(settings.touristTax));
+  const [accommodationFee, setAccommodationFee] = useState(String(settings.accommodationFee));
+  const [touristTaxExemptAge, setTouristTaxExemptAge] = useState(
+    String(settings.touristTaxExemptAge)
+  );
   const [seasons, setSeasons] = useState<SeasonDraft[]>(settings.seasons.map(toDraft));
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<number | null>(null);
@@ -169,13 +171,22 @@ export function SettingsPage({ settings, onSave, isAdmin = false }: SettingsPage
     setPausalPrice(String(settings.pausalPrice));
     setDiscount(String(settings.oneoffDiscountPercent));
     setTouristTax(String(settings.touristTax));
+    setAccommodationFee(String(settings.accommodationFee));
+    setTouristTaxExemptAge(String(settings.touristTaxExemptAge));
     setSeasons(settings.seasons.map(toDraft));
   }, [settings]);
 
   const parsedPrice = Number(pausalPrice) || 0;
   const parsedDiscount = Number(discount) || 0;
   const preview = computePricing(
-    { pausalPrice: parsedPrice, oneoffDiscountPercent: parsedDiscount, touristTax: 0, seasons: [] },
+    {
+      pausalPrice: parsedPrice,
+      oneoffDiscountPercent: parsedDiscount,
+      touristTax: 0,
+      accommodationFee: 0,
+      touristTaxExemptAge: 0,
+      seasons: []
+    },
     0
   );
 
@@ -231,6 +242,16 @@ export function SettingsPage({ settings, onSave, isAdmin = false }: SettingsPage
       setError('Turistična taksa ne sme biti negativna.');
       return;
     }
+    const parsedAccommodationFee = Number(accommodationFee) || 0;
+    if (parsedAccommodationFee < 0) {
+      setError('Enkratno plačilo nastanitve ne sme biti negativno.');
+      return;
+    }
+    const parsedTouristTaxExemptAge = Math.trunc(Number(touristTaxExemptAge) || 0);
+    if (parsedTouristTaxExemptAge < 0) {
+      setError('Starost, opravičena plačila turistične takse, ne sme biti negativna.');
+      return;
+    }
 
     const seasonsPayload: Season[] = seasons.map((season) => {
       const startMonth = Number(season.startMonth) || 0;
@@ -272,6 +293,8 @@ export function SettingsPage({ settings, onSave, isAdmin = false }: SettingsPage
         pausalPrice: parsedPrice,
         oneoffDiscountPercent: parsedDiscount,
         touristTax: parsedTax,
+        accommodationFee: parsedAccommodationFee,
+        touristTaxExemptAge: parsedTouristTaxExemptAge,
         seasons: seasonsPayload
       });
       setSavedAt(Date.now());
@@ -290,8 +313,8 @@ export function SettingsPage({ settings, onSave, isAdmin = false }: SettingsPage
         </h2>
         <p className="text-sm text-white/80 drop-shadow-sm">
           {readOnly
-            ? 'Letni pavšal in popust ob enkratnem plačilu, turistična taksa ter cene po sezonah za dodatne osebe, ki niso na pavšalu.'
-            : 'Določi letni pavšal in popust ob enkratnem plačilu, turistično takso ter cene po sezonah za dodatne osebe, ki niso na pavšalu.'}
+            ? 'Letni pavšal in popust ob enkratnem plačilu, turistična taksa (z oprostitvijo za mlajše otroke), enkratno plačilo nastanitve ter cene po sezonah za dodatne osebe, ki niso na pavšalu.'
+            : 'Določi letni pavšal in popust ob enkratnem plačilu, turistično takso (z oprostitvijo za mlajše otroke), enkratno plačilo nastanitve ter cene po sezonah za dodatne osebe, ki niso na pavšalu.'}
         </p>
       </div>
 
@@ -342,6 +365,34 @@ export function SettingsPage({ settings, onSave, isAdmin = false }: SettingsPage
                   onChange={(event) => setTouristTax(event.target.value)}
                 />
               </label>
+
+              <label className="block">
+                <span className="mb-1.5 block text-sm font-medium text-brand-dark">
+                  Otroci oproščeni takse do starosti (let)
+                </span>
+                <Input
+                  type="number"
+                  min={0}
+                  step="1"
+                  inputMode="numeric"
+                  value={touristTaxExemptAge}
+                  onChange={(event) => setTouristTaxExemptAge(event.target.value)}
+                />
+              </label>
+
+              <label className="block">
+                <span className="mb-1.5 block text-sm font-medium text-brand-dark">
+                  Enkratno plačilo nastanitve (€ / oseba)
+                </span>
+                <Input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  inputMode="decimal"
+                  value={accommodationFee}
+                  onChange={(event) => setAccommodationFee(event.target.value)}
+                />
+              </label>
             </div>
           )}
 
@@ -369,6 +420,26 @@ export function SettingsPage({ settings, onSave, isAdmin = false }: SettingsPage
                 <dt className="text-xs uppercase tracking-wide text-brand/60">Turistična taksa</dt>
                 <dd className="text-base font-semibold text-brand-dark">
                   {formatEur(Number(touristTax) || 0)}
+                </dd>
+              </div>
+            )}
+            {readOnly && (
+              <div>
+                <dt className="text-xs uppercase tracking-wide text-brand/60">
+                  Oprostitev takse do starosti
+                </dt>
+                <dd className="text-base font-semibold text-brand-dark">
+                  {Number(touristTaxExemptAge) || 0} let
+                </dd>
+              </div>
+            )}
+            {readOnly && (
+              <div>
+                <dt className="text-xs uppercase tracking-wide text-brand/60">
+                  Enkratno plačilo nastanitve
+                </dt>
+                <dd className="text-base font-semibold text-brand-dark">
+                  {formatEur(Number(accommodationFee) || 0)}
                 </dd>
               </div>
             )}
