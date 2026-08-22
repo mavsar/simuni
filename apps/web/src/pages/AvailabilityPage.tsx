@@ -540,7 +540,9 @@ export function AvailabilityPage({
     () =>
       reservations
         .filter((reservation) => isAdmin || reservation.userId === currentUserId)
-        .sort((a, b) => a.startDay.localeCompare(b.startDay)),
+        .sort(
+          (a, b) => a.startDay.localeCompare(b.startDay) || a.endDay.localeCompare(b.endDay),
+        ),
     [reservations, currentUserId, isAdmin],
   );
 
@@ -1028,8 +1030,8 @@ export function AvailabilityPage({
           </p>
         ) : (
           <>
-            {/* ── Mobile card list (< sm) ─────────────────────────────── */}
-            <div className="space-y-2 sm:hidden">
+            {/* ── Mobile card list (< xl, overridden to 1050px) ────────── */}
+            <div className="space-y-2 xl:hidden">
               {filteredLines.map(({ reservation, days, breakdown, priceMayChange }) => {
                 const expanded = expandedId === reservation.id;
                 return (
@@ -1142,8 +1144,8 @@ export function AvailabilityPage({
               </p>
             </div>
 
-            {/* ── Desktop table (sm+) ─────────────────────────────────── */}
-            <div className="hidden overflow-x-auto sm:block">
+            {/* ── Desktop table (xl+, overridden to 1050px) ────────────── */}
+            <div className="hidden overflow-x-auto xl:block">
               <table className="w-full table-fixed text-sm">
                 <colgroup>
                   {/* Only this column is flexible; the rest are fixed px so the

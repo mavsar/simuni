@@ -1,4 +1,4 @@
-@import "tailwindcss";
+@import 'tailwindcss';
 
 /* ── Šimuni brand theme (camping-simuni.hr) ── */
 @theme {
@@ -7,6 +7,11 @@
   --color-sand: #f8e3cb;
   --color-sky: #eef3fa;
   --color-ink: #003987;
+
+  /* The reservation table (6 fixed-width columns incl. Plačilo) stays
+     cramped on tablet/small-laptop widths, so it switches to the mobile
+     card layout later than the usual `sm` breakpoint — up to 1050px wide. */
+  --breakpoint-xl: 1050px;
 }
 
 * {
@@ -14,12 +19,20 @@
 }
 
 button,
-[role="button"] {
+[role='button'] {
   cursor: pointer;
 }
 
 :root {
-  font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+  font-family:
+    Inter,
+    system-ui,
+    -apple-system,
+    Segoe UI,
+    Roboto,
+    Helvetica,
+    Arial,
+    sans-serif;
   color: var(--color-ink);
 }
 
@@ -50,7 +63,7 @@ body {
   margin: 0;
   color: var(--color-ink);
   /* Hero background from camping-simuni.hr */
-  background-image: url("/background.jpg");
+  background-image: url('/background.jpg');
   background-size: cover;
   background-position: center;
   background-repeat: no-repeat;
