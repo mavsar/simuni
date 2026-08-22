@@ -73,6 +73,14 @@ export function formatDayRange(startKey: string, endKey: string): string {
   return `${startLabel} – ${endLabel}`;
 }
 
+/** Full date+time label for an ISO timestamp, e.g. `21. 8. 2026, 14:32`. */
+export function formatDateTime(iso: string): string {
+  const date = new Date(iso);
+  const hours = String(date.getHours()).padStart(2, '0');
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+  return `${date.getDate()}. ${date.getMonth() + 1}. ${date.getFullYear()}, ${hours}:${minutes}`;
+}
+
 /** Index (0=Mon … 6=Sun) of the first day of the given month. */
 export function mondayFirstOffset(year: number, month: number): number {
   const jsDay = new Date(year, month, 1).getDay();

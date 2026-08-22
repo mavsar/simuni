@@ -1,13 +1,14 @@
-import { CalendarDays, Plus, Save, Trash2 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { CalendarDays, Lock, Plus, Save, Trash2, Unlock } from 'lucide-react';
+import { useState } from 'react';
 
 import { Button } from '../components/ui/Button';
 import { AlertBox, Card, CardRow } from '../components/ui/Card';
+import { ConfirmModal } from '../components/ui/ConfirmModal';
 import { DateRangePicker, type DateRange } from '../components/ui/DateRangePicker';
 import { Input } from '../components/ui/Input';
 import { Label } from '../components/ui/Label';
 import { Modal } from '../components/ui/Modal';
-import { computePricing, formatEur, seasonLabel } from '../lib/pricing';
+import { computePricing, formatEur, seasonLabel, type YearSettings } from '../lib/pricing';
 import type { Season, Settings } from '../lib/types';
 
 /** Seasons recur every year, so the picker uses a fixed reference year and we
@@ -15,8 +16,11 @@ import type { Season, Settings } from '../lib/types';
 const REF_YEAR = 2024;
 
 export type SettingsPageProps = {
-  settings: Settings;
-  onSave: (next: Settings) => Promise<void>;
+  /** Pricing settings for every configurable year, ascending. */
+  years: YearSettings[];
+  onSave: (year: number, next: Settings) => Promise<void>;
+  onConfirm: (year: number) => Promise<void>;
+  onUnlock: (year: number) => Promise<void>;
   /** Admins edit the pricing; regular users see a read-only "Cenik" view. */
   isAdmin?: boolean;
 };
@@ -153,28 +157,100 @@ const PRICE_FIELDS = [
   { key: 'priceChild6_11', label: 'Otroci 6–11' }
 ] as const;
 
-export function SettingsPage({ settings, onSave, isAdmin = false }: SettingsPageProps) {
-  const readOnly = !isAdmin;
-  const [pausalPrice, setPausalPrice] = useState(String(settings.pausalPrice));
-  const [discount, setDiscount] = useState(String(settings.oneoffDiscountPercent));
-  const [touristTax, setTouristTax] = useState(String(settings.touristTax));
-  const [accommodationFee, setAccommodationFee] = useState(String(settings.accommodationFee));
+const EMPTY_SEASONS: Season[] = [];
+
+export function SettingsPage({ years, onSave, onConfirm, onUnlock, isAdmin = false }: SettingsPageProps) {
+  const [year, setYear] = useState(() => new Date().getFullYear());
+  const yearSettings: YearSettings =
+    years.find((entry) => entry.year === year) ??
+    years[years.length - 1] ?? {
+      year,
+      pausalPrice: 0,
+      oneoffDiscountPercent: 0,
+      touristTax: 0,
+      accommodationFee: 0,
+      touristTaxExemptAge: 0,
+      pricesConfirmed: false,
+      pricesConfirmedAt: null,
+      stored: false,
+      updatedAt: null,
+      seasons: EMPTY_SEASONS,
+      snapshots: []
+    };
+
+  const locked = yearSettings.pricesConfirmed;
+  const readOnly = !isAdmin || locked;
+
+  const [pausalPrice, setPausalPrice] = useState(String(yearSettings.pausalPrice));
+  const [discount, setDiscount] = useState(String(yearSettings.oneoffDiscountPercent));
+  const [touristTax, setTouristTax] = useState(String(yearSettings.touristTax));
+  const [accommodationFee, setAccommodationFee] = useState(String(yearSettings.accommodationFee));
   const [touristTaxExemptAge, setTouristTaxExemptAge] = useState(
-    String(settings.touristTaxExemptAge)
+    String(yearSettings.touristTaxExemptAge)
   );
-  const [seasons, setSeasons] = useState<SeasonDraft[]>(settings.seasons.map(toDraft));
+  const [seasons, setSeasons] = useState<SeasonDraft[]>(yearSettings.seasons.map(toDraft));
   const [saving, setSaving] = useState(false);
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    setPausalPrice(String(settings.pausalPrice));
-    setDiscount(String(settings.oneoffDiscountPercent));
-    setTouristTax(String(settings.touristTax));
-    setAccommodationFee(String(settings.accommodationFee));
-    setTouristTaxExemptAge(String(settings.touristTaxExemptAge));
-    setSeasons(settings.seasons.map(toDraft));
-  }, [settings]);
+  // A year the admin never edited still carries updatedAt from whichever year
+  // it inherits from — so this key changes exactly when the drafts below
+  // should be re-seeded from `yearSettings`: on switching years, and after a
+  // save/confirm/unlock refreshes that year's (or its source year's) data.
+  // Doing this at render time (rather than useEffect) avoids resetting the
+  // fields on every unrelated re-render, since `yearSettings` is a fresh
+  // object for any inherited year.
+  const resyncKey = `${yearSettings.year}|${yearSettings.updatedAt ?? ''}|${yearSettings.pricesConfirmed}`;
+  const [seededKey, setSeededKey] = useState(resyncKey);
+  if (seededKey !== resyncKey) {
+    setSeededKey(resyncKey);
+    setPausalPrice(String(yearSettings.pausalPrice));
+    setDiscount(String(yearSettings.oneoffDiscountPercent));
+    setTouristTax(String(yearSettings.touristTax));
+    setAccommodationFee(String(yearSettings.accommodationFee));
+    setTouristTaxExemptAge(String(yearSettings.touristTaxExemptAge));
+    setSeasons(yearSettings.seasons.map(toDraft));
+    setError(null);
+    setSavedAt(null);
+  }
+
+  const dirty =
+    pausalPrice !== String(yearSettings.pausalPrice) ||
+    discount !== String(yearSettings.oneoffDiscountPercent) ||
+    touristTax !== String(yearSettings.touristTax) ||
+    accommodationFee !== String(yearSettings.accommodationFee) ||
+    touristTaxExemptAge !== String(yearSettings.touristTaxExemptAge) ||
+    JSON.stringify(seasons) !== JSON.stringify(yearSettings.seasons.map(toDraft));
+
+  // Switching years while there are unsaved edits asks for confirmation first.
+  const [pendingYear, setPendingYear] = useState<number | null>(null);
+
+  function requestYear(next: number) {
+    if (next === year) return;
+    if (dirty) {
+      setPendingYear(next);
+    } else {
+      setYear(next);
+    }
+  }
+
+  const [priceAction, setPriceAction] = useState<'confirm' | 'unlock' | null>(null);
+  const [priceActionBusy, setPriceActionBusy] = useState(false);
+
+  async function runPriceAction() {
+    if (!priceAction) return;
+    setPriceActionBusy(true);
+    try {
+      if (priceAction === 'confirm') await onConfirm(year);
+      else await onUnlock(year);
+      setPriceAction(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Napaka pri potrjevanju cen.');
+      setPriceAction(null);
+    } finally {
+      setPriceActionBusy(false);
+    }
+  }
 
   const parsedPrice = Number(pausalPrice) || 0;
   const parsedDiscount = Number(discount) || 0;
@@ -289,7 +365,7 @@ export function SettingsPage({ settings, onSave, isAdmin = false }: SettingsPage
 
     setSaving(true);
     try {
-      await onSave({
+      await onSave(year, {
         pausalPrice: parsedPrice,
         oneoffDiscountPercent: parsedDiscount,
         touristTax: parsedTax,
@@ -308,8 +384,13 @@ export function SettingsPage({ settings, onSave, isAdmin = false }: SettingsPage
   return (
     <div className="mx-auto w-full max-w-5xl space-y-4">
       <div>
-        <h2 className="mb-1 text-xl font-semibold text-white drop-shadow-sm">
-          {readOnly ? 'Cenik' : 'Nastavitve'}
+        <h2 className="mb-1 flex items-center gap-2 text-xl font-semibold text-white drop-shadow-sm">
+          {isAdmin ? 'Nastavitve' : 'Cenik'}
+          {locked && (
+            <Label color="green" size="sm">
+              Cene potrjene
+            </Label>
+          )}
         </h2>
         <p className="text-sm text-white/80 drop-shadow-sm">
           {readOnly
@@ -317,6 +398,27 @@ export function SettingsPage({ settings, onSave, isAdmin = false }: SettingsPage
             : 'Določi letni pavšal in popust ob enkratnem plačilu, turistično takso (z oprostitvijo za mlajše otroke), enkratno plačilo nastanitve ter cene po sezonah za dodatne osebe, ki niso na pavšalu.'}
         </p>
       </div>
+
+      {years.length > 1 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs font-medium uppercase tracking-wide text-white/70">Leto</span>
+          {years.map((entry) => (
+            <button
+              key={entry.year}
+              type="button"
+              onClick={() => requestYear(entry.year)}
+              className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-medium backdrop-blur-sm transition-colors ${
+                entry.year === year
+                  ? 'bg-white text-brand'
+                  : 'bg-white/15 text-white hover:bg-white/25'
+              }`}
+            >
+              {entry.year}
+              {entry.pricesConfirmed && <Lock size={11} aria-hidden />}
+            </button>
+          ))}
+        </div>
+      )}
 
       <form onSubmit={handleSubmit} className="space-y-4">
         <Card as="section">
@@ -591,6 +693,38 @@ export function SettingsPage({ settings, onSave, isAdmin = false }: SettingsPage
           )}
         </Card>
 
+        {isAdmin && (
+          <Card as="section">
+            <h3 className="mb-1 text-base font-semibold text-brand-dark">Potrditev cen</h3>
+            <p className="mb-4 text-sm text-brand/60">
+              {locked
+                ? `Cene za leto ${year} so potrjene in zaklenjene. Rezervacije tega leta ne prikazujejo več oznake „se lahko spremeni“.`
+                : `Dokler cene za leto ${year} niso potrjene, se zneski pri rezervacijah tega leta še spreminjajo.`}
+            </p>
+            {!locked && !yearSettings.stored && (
+              <AlertBox variant="info" className="mb-3">
+                Vrednosti za leto {year} so prevzete iz prejšnjega leta. Ob potrditvi se shranijo
+                takšne, kot so prikazane.
+              </AlertBox>
+            )}
+            <Button
+              type="button"
+              variant={locked ? 'outline' : 'full'}
+              color={locked ? 'danger' : 'brand'}
+              icon={locked ? Unlock : Lock}
+              disabled={dirty && !locked}
+              onClick={() => setPriceAction(locked ? 'unlock' : 'confirm')}
+            >
+              {locked ? 'Odkleni cene' : 'Potrdi cene'}
+            </Button>
+            {dirty && !locked && (
+              <p className="mt-2 text-xs text-brand/60">
+                Najprej shrani spremembe, preden potrdiš cene za to leto.
+              </p>
+            )}
+          </Card>
+        )}
+
         {!readOnly && error && <AlertBox>{error}</AlertBox>}
 
         {!readOnly && (
@@ -604,6 +738,34 @@ export function SettingsPage({ settings, onSave, isAdmin = false }: SettingsPage
           </div>
         )}
       </form>
+
+      <ConfirmModal
+        open={pendingYear !== null}
+        title="Neshranjene spremembe"
+        busy={false}
+        onConfirm={() => {
+          if (pendingYear !== null) setYear(pendingYear);
+          setPendingYear(null);
+        }}
+        onCancel={() => setPendingYear(null)}
+        confirmLabel="Nadaljuj"
+      >
+        Neshranjene spremembe za leto {year} bodo izgubljene. Nadaljujem?
+      </ConfirmModal>
+
+      <ConfirmModal
+        open={priceAction !== null}
+        title={priceAction === 'confirm' ? `Potrdi cene za ${year}?` : `Odkleni cene za ${year}?`}
+        destructive={priceAction === 'unlock'}
+        busy={priceActionBusy}
+        confirmLabel={priceAction === 'confirm' ? 'Potrdi cene' : 'Odkleni'}
+        onConfirm={runPriceAction}
+        onCancel={() => setPriceAction(null)}
+      >
+        {priceAction === 'confirm'
+          ? `Cene za leto ${year} bodo zaklenjene in jih ne bo več mogoče urejati, dokler jih ne odkleneš. Oznaka „se lahko spremeni“ pri rezervacijah tega leta bo izginila.`
+          : `Cene za leto ${year} bodo znova urejljive. Zneski pri rezervacijah tega leta se lahko spremenijo.`}
+      </ConfirmModal>
     </div>
   );
 }

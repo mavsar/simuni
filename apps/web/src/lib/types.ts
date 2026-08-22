@@ -52,7 +52,63 @@ export type Reservation = {
   persons: Person[];
   /** Cars brought on this reservation. */
   cars: Car[];
+  /** Admin-set: whether the bungalov payment has been settled. */
+  bungalovPaid: boolean;
 };
+
+/** Payload for `PATCH /reservations/:id/payment`. Admins only. */
+export type ReservationPaymentInput = {
+  bungalovPaid: boolean;
+};
+
+export type ReservationCreatedChanges = {
+  startDay: string;
+  endDay: string;
+  ownerName: string;
+  persons: string[];
+  cars: string[];
+};
+
+export type ReservationUpdatedChanges = {
+  period?: {
+    from: { startDay: string; endDay: string };
+    to: { startDay: string; endDay: string };
+  };
+  owner?: { from: string; to: string };
+  persons?: { added: string[]; removed: string[] };
+  cars?: { added: string[]; removed: string[] };
+};
+
+export type ReservationPaymentChanges = {
+  bungalovPaid: { from: boolean; to: boolean };
+};
+
+/** One admin-visible audit-trail entry for a reservation. */
+export type ReservationHistoryEntry =
+  | {
+      id: number;
+      action: 'created';
+      changes: ReservationCreatedChanges;
+      createdAt: string;
+      actorName: string;
+      actorRole: Role;
+    }
+  | {
+      id: number;
+      action: 'updated';
+      changes: ReservationUpdatedChanges;
+      createdAt: string;
+      actorName: string;
+      actorRole: Role;
+    }
+  | {
+      id: number;
+      action: 'payment';
+      changes: ReservationPaymentChanges;
+      createdAt: string;
+      actorName: string;
+      actorRole: Role;
+    };
 
 export type ReservationRangeInput = {
   startDay: string;

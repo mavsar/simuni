@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 
-import { authenticate, type AuthedRequest } from "../auth/middleware.js";
+import { authenticate, requireAdmin, type AuthedRequest } from "../auth/middleware.js";
 import { sqlite } from "../db/client.js";
 
 export const reservationsRouter = Router();
@@ -14,6 +14,7 @@ type ReservationRow = {
   start_day: string;
   end_day: string;
   family_name: string;
+  bungalov_paid: number;
 };
 
 type AttendeeRow = {
@@ -34,16 +35,19 @@ type CarRow = {
 const dayPattern = /^\d{4}-\d{2}-\d{2}$/;
 
 const selectAll = sqlite.prepare(
-  `SELECT r.id, r.user_id, r.start_day, r.end_day, u.family_name
+  `SELECT r.id, r.user_id, r.start_day, r.end_day, u.family_name, r.bungalov_paid
    FROM reservations r
    JOIN users u ON u.id = r.user_id
    ORDER BY r.start_day`
 );
 const selectById = sqlite.prepare(
-  `SELECT r.id, r.user_id, r.start_day, r.end_day, u.family_name
+  `SELECT r.id, r.user_id, r.start_day, r.end_day, u.family_name, r.bungalov_paid
    FROM reservations r
    JOIN users u ON u.id = r.user_id
    WHERE r.id = ?`
+);
+const updateReservationPayment = sqlite.prepare(
+  `UPDATE reservations SET bungalov_paid = @bungalovPaid WHERE id = @id`
 );
 const insertReservation = sqlite.prepare(
   `INSERT INTO reservations (user_id, start_day, end_day)
@@ -89,6 +93,19 @@ const selectFamilyCarIds = sqlite.prepare(
   "SELECT id FROM cars WHERE family_id = ?"
 );
 
+const selectFamilyName = sqlite.prepare("SELECT family_name FROM users WHERE id = ?");
+const insertHistory = sqlite.prepare(
+  `INSERT INTO reservation_history (reservation_id, user_id, action, changes)
+   VALUES (@reservationId, @userId, @action, @changes)`
+);
+const selectHistory = sqlite.prepare(
+  `SELECT h.id, h.action, h.changes, h.created_at, u.family_name AS actor_name, u.role AS actor_role
+   FROM reservation_history h
+   JOIN users u ON u.id = h.user_id
+   WHERE h.reservation_id = ?
+   ORDER BY h.created_at DESC, h.id DESC`
+);
+
 function attendeesFor(reservationId: number) {
   return (selectAttendees.all(reservationId) as AttendeeRow[]).map((row) => ({
     id: row.id,
@@ -108,6 +125,84 @@ function carsFor(reservationId: number) {
   }));
 }
 
+/** Resolves person ids to their current names, regardless of family. */
+function resolvePersonNames(ids: number[]): Map<number, string> {
+  if (ids.length === 0) return new Map();
+  const placeholders = ids.map(() => "?").join(",");
+  const rows = sqlite
+    .prepare(`SELECT id, name FROM persons WHERE id IN (${placeholders})`)
+    .all(...ids) as Array<{ id: number; name: string }>;
+  return new Map(rows.map((row) => [row.id, row.name]));
+}
+
+/** Resolves car ids to their current names, regardless of family. */
+function resolveCarNames(ids: number[]): Map<number, string> {
+  if (ids.length === 0) return new Map();
+  const placeholders = ids.map(() => "?").join(",");
+  const rows = sqlite
+    .prepare(`SELECT id, name FROM cars WHERE id IN (${placeholders})`)
+    .all(...ids) as Array<{ id: number; name: string }>;
+  return new Map(rows.map((row) => [row.id, row.name]));
+}
+
+function namesInOrder(ids: number[], byId: Map<number, string>): string[] {
+  return ids.map((id) => byId.get(id) ?? "?");
+}
+
+function familyNameOf(userId: number): string {
+  return (selectFamilyName.get(userId) as { family_name: string } | undefined)?.family_name ?? "?";
+}
+
+function recordHistory(
+  reservationId: number,
+  userId: number,
+  action: string,
+  changes: Record<string, unknown>
+): void {
+  insertHistory.run({ reservationId, userId, action, changes: JSON.stringify(changes) });
+}
+
+/** Diff of an update — only the fields that actually changed. Empty means no-op. */
+function buildUpdateChanges(before: {
+  startDay: string;
+  endDay: string;
+  ownerName: string;
+  personNames: string[];
+  carNames: string[];
+}, after: {
+  startDay: string;
+  endDay: string;
+  ownerName: string;
+  personNames: string[];
+  carNames: string[];
+}): Record<string, unknown> {
+  const changes: Record<string, unknown> = {};
+
+  if (before.startDay !== after.startDay || before.endDay !== after.endDay) {
+    changes.period = {
+      from: { startDay: before.startDay, endDay: before.endDay },
+      to: { startDay: after.startDay, endDay: after.endDay }
+    };
+  }
+  if (before.ownerName !== after.ownerName) {
+    changes.owner = { from: before.ownerName, to: after.ownerName };
+  }
+
+  const personsAdded = after.personNames.filter((name) => !before.personNames.includes(name));
+  const personsRemoved = before.personNames.filter((name) => !after.personNames.includes(name));
+  if (personsAdded.length > 0 || personsRemoved.length > 0) {
+    changes.persons = { added: personsAdded, removed: personsRemoved };
+  }
+
+  const carsAdded = after.carNames.filter((name) => !before.carNames.includes(name));
+  const carsRemoved = before.carNames.filter((name) => !after.carNames.includes(name));
+  if (carsAdded.length > 0 || carsRemoved.length > 0) {
+    changes.cars = { added: carsAdded, removed: carsRemoved };
+  }
+
+  return changes;
+}
+
 function toDto(row: ReservationRow) {
   return {
     id: row.id,
@@ -116,7 +211,8 @@ function toDto(row: ReservationRow) {
     endDay: row.end_day,
     ownerName: row.family_name,
     persons: attendeesFor(row.id),
-    cars: carsFor(row.id)
+    cars: carsFor(row.id),
+    bungalovPaid: row.bungalov_paid === 1
   };
 }
 
@@ -215,6 +311,17 @@ reservationsRouter.post("/", (req, res) => {
   });
 
   const reservationId = create();
+
+  const personMap = resolvePersonNames(personIds);
+  const carMap = resolveCarNames(carIds);
+  recordHistory(reservationId, user.id, "created", {
+    startDay: parsed.data.startDay,
+    endDay: parsed.data.endDay,
+    ownerName: familyNameOf(ownerId),
+    persons: namesInOrder(personIds, personMap),
+    cars: namesInOrder(carIds, carMap)
+  });
+
   const row = selectById.get(reservationId) as ReservationRow;
   res.status(201).json({ reservation: toDto(row), reservations: readAll() });
 });
@@ -257,6 +364,16 @@ reservationsRouter.put("/:id", (req, res) => {
   const personIds = validPersonIds(ownerId, parsed.data.personIds);
   const carIds = validCarIds(ownerId, parsed.data.carIds);
 
+  // Captured before mutating, so the diff below compares against what was
+  // actually true a moment ago.
+  const before = {
+    startDay: existing.start_day,
+    endDay: existing.end_day,
+    ownerName: existing.family_name,
+    personNames: attendeesFor(id).map((person) => person.name),
+    carNames: carsFor(id).map((car) => car.name)
+  };
+
   const update = sqlite.transaction(() => {
     updateReservation.run({
       id,
@@ -270,8 +387,92 @@ reservationsRouter.put("/:id", (req, res) => {
 
   update();
 
+  const personMap = resolvePersonNames(personIds);
+  const carMap = resolveCarNames(carIds);
+  const changes = buildUpdateChanges(before, {
+    startDay: parsed.data.startDay,
+    endDay: parsed.data.endDay,
+    ownerName: familyNameOf(ownerId),
+    personNames: namesInOrder(personIds, personMap),
+    carNames: namesInOrder(carIds, carMap)
+  });
+  if (Object.keys(changes).length > 0) {
+    recordHistory(id, user.id, "updated", changes);
+  }
+
   const row = selectById.get(id) as ReservationRow;
   res.json({ reservation: toDto(row), reservations: readAll() });
+});
+
+const paymentSchema = z.object({
+  bungalovPaid: z.boolean()
+});
+
+reservationsRouter.patch("/:id/payment", requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) {
+    res.status(400).json({ error: "Neveljaven ID." });
+    return;
+  }
+
+  const existing = selectById.get(id) as ReservationRow | undefined;
+  if (!existing) {
+    res.status(404).json({ error: "Rezervacija ne obstaja." });
+    return;
+  }
+
+  const parsed = paymentSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Neveljavni podatki." });
+    return;
+  }
+
+  const user = (req as AuthedRequest).user;
+  if (!user) {
+    res.status(401).json({ error: "Potrebna je prijava." });
+    return;
+  }
+
+  const wasPaid = existing.bungalov_paid === 1;
+  updateReservationPayment.run({ id, bungalovPaid: parsed.data.bungalovPaid ? 1 : 0 });
+
+  if (wasPaid !== parsed.data.bungalovPaid) {
+    recordHistory(id, user.id, "payment", {
+      bungalovPaid: { from: wasPaid, to: parsed.data.bungalovPaid }
+    });
+  }
+
+  const row = selectById.get(id) as ReservationRow;
+  res.json({ reservation: toDto(row), reservations: readAll() });
+});
+
+type HistoryRow = {
+  id: number;
+  action: string;
+  changes: string;
+  created_at: string;
+  actor_name: string;
+  actor_role: string;
+};
+
+reservationsRouter.get("/:id/history", requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) {
+    res.status(400).json({ error: "Neveljaven ID." });
+    return;
+  }
+
+  const rows = selectHistory.all(id) as HistoryRow[];
+  res.json({
+    history: rows.map((row) => ({
+      id: row.id,
+      action: row.action,
+      changes: JSON.parse(row.changes) as Record<string, unknown>,
+      createdAt: row.created_at,
+      actorName: row.actor_name,
+      actorRole: row.actor_role
+    }))
+  });
 });
 
 reservationsRouter.delete("/:id", (req, res) => {

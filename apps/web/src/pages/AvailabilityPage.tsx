@@ -23,6 +23,7 @@ import { api } from '../lib/api';
 import {
   computeAge,
   eachNightKeyInRange,
+  formatDateTime,
   formatDayRange,
   isChild,
   nightCountInRange,
@@ -33,24 +34,28 @@ import {
 import {
   accommodationFeeTotal,
   ageBand,
-  computeBungalovPricing,
+  buildReservationBreakdowns,
+  computeBungalovPricingByYear,
+  dayWeight,
   formatEur,
-  isTouristTaxExempt,
-  maxAdultPrice,
   seasonDiscountPercent,
   seasonForDay,
   seasonLabel,
   seasonPriceForBand,
   touristTaxPayerCount,
+  yearOfDay,
   type AgeBand,
+  type ReservationBreakdownData,
+  type YearSettingsLookup,
 } from '../lib/pricing';
 import type {
   Car,
   Family,
   Person,
   Reservation,
+  ReservationHistoryEntry,
   ReservationRangeInput,
-  Settings,
+  Season,
 } from '../lib/types';
 import { useAuth } from '../state/AuthContext';
 
@@ -60,29 +65,6 @@ const BAND_LABEL: Record<AgeBand, string> = {
   child6_11: 'Otrok 6–11',
   adult: 'Odrasli',
   adultSenior: 'Odrasli 60+',
-};
-
-type BreakdownDay = {
-  day: string;
-  seasonName: string | null;
-  discountPercent: number;
-  personsCost: number;
-  taxCost: number;
-  taxPayers: number;
-  fams: number;
-  fullBungalov: number;
-  bungalovCost: number;
-};
-
-type ReservationBreakdownData = {
-  attendees: Array<{ person: Person; band: AgeBand; taxExempt: boolean }>;
-  days: BreakdownDay[];
-  simuniPersons: number;
-  simuniTax: number;
-  accommodationFee: number;
-  simuni: number;
-  bungalov: number;
-  total: number;
 };
 
 type EstimatePersonRow = {
@@ -117,7 +99,13 @@ type SelectionEstimate = {
   simuniTax: number;
   /** How many selected attendees are old enough to owe tourist tax. */
   touristTaxPayers: number;
+  /** Tourist tax rate for the selection's (check-in) year. */
+  touristTaxRate: number;
+  /** Age below which an attendee is exempt from tourist tax, for that year. */
+  touristTaxExemptAge: number;
   accommodationFee: number;
+  /** One-time accommodation payment rate per attendee, for that year. */
+  accommodationFeeRate: number;
   simuni: number;
   bungalov: number;
   total: number;
@@ -129,8 +117,54 @@ function shortDay(dayKey: string): string {
   return `${day}. ${month}.`;
 }
 
+/** Human-readable line(s) describing what one history entry changed. */
+function describeHistoryChanges(entry: ReservationHistoryEntry): string[] {
+  switch (entry.action) {
+    case 'created': {
+      const c = entry.changes;
+      const lines = [
+        `Ustvaril rezervacijo ${formatDayRange(c.startDay, c.endDay)} za družino ${c.ownerName}.`,
+      ];
+      if (c.persons.length > 0) lines.push(`Osebe: ${c.persons.join(', ')}.`);
+      if (c.cars.length > 0) lines.push(`Avtomobili: ${c.cars.join(', ')}.`);
+      return lines;
+    }
+    case 'updated': {
+      const c = entry.changes;
+      const lines: string[] = [];
+      if (c.period) {
+        lines.push(
+          `Spremenil obdobje: ${formatDayRange(c.period.from.startDay, c.period.from.endDay)} → ${formatDayRange(c.period.to.startDay, c.period.to.endDay)}.`,
+        );
+      }
+      if (c.owner) {
+        lines.push(`Spremenil družino: ${c.owner.from} → ${c.owner.to}.`);
+      }
+      if (c.persons) {
+        if (c.persons.added.length > 0) lines.push(`Dodal osebe: ${c.persons.added.join(', ')}.`);
+        if (c.persons.removed.length > 0) {
+          lines.push(`Odstranil osebe: ${c.persons.removed.join(', ')}.`);
+        }
+      }
+      if (c.cars) {
+        if (c.cars.added.length > 0) lines.push(`Dodal avtomobile: ${c.cars.added.join(', ')}.`);
+        if (c.cars.removed.length > 0) {
+          lines.push(`Odstranil avtomobile: ${c.cars.removed.join(', ')}.`);
+        }
+      }
+      return lines.length > 0 ? lines : ['Shranil rezervacijo brez sprememb.'];
+    }
+    case 'payment': {
+      const { from, to } = entry.changes.bungalovPaid;
+      return [`Bungalov: ${from ? 'plačan' : 'ni plačan'} → ${to ? 'plačan' : 'ni plačan'}.`];
+    }
+    default:
+      return [];
+  }
+}
+
 export type AvailabilityPageProps = {
-  settings: Settings;
+  settingsForYear: YearSettingsLookup;
   reservations: Reservation[];
   occupiedDays: Set<string>;
   currentUserId: number;
@@ -139,6 +173,7 @@ export type AvailabilityPageProps = {
   onCreateReservation: (input: ReservationRangeInput) => Promise<void>;
   onUpdateReservation: (id: number, input: ReservationRangeInput) => Promise<void>;
   onDeleteReservation: (id: number) => Promise<void>;
+  onUpdateReservationPayment: (id: number, bungalovPaid: boolean) => Promise<void>;
 };
 
 /** Counts attendees split into adults and children by age. */
@@ -189,20 +224,49 @@ function AttendeeCounts({ persons }: { persons: Person[] }) {
   );
 }
 
-/** Expanded detail panel explaining how a reservation's prices are derived. */
-function ReservationBreakdown({
-  breakdown,
-  touristTax,
-  accommodationFeeRate,
-  touristTaxExemptAge,
+/**
+ * The reservation table's "Plačilo" column. While a year's prices are still
+ * open the bungalov amount can still move, so payment status isn't shown yet
+ * — only once prices are locked does whether it was actually paid become a
+ * fact worth displaying.
+ */
+function PaymentColumnLabel({
+  priceMayChange,
+  bungalovPaid,
+  year,
 }: {
-  breakdown: ReservationBreakdownData;
-  touristTax: number;
-  accommodationFeeRate: number;
-  touristTaxExemptAge: number;
+  priceMayChange: boolean;
+  bungalovPaid: boolean;
+  year: number;
 }) {
-  const { attendees, days, simuniPersons, simuniTax, accommodationFee, simuni, bungalov, total } =
-    breakdown;
+  if (priceMayChange) {
+    return (
+      <Tooltip content={`Cene za leto ${year} še niso potrjene — znesek se lahko še spremeni.`}>
+        <p className="w-fit cursor-default text-xs text-brand/60">Cena se lahko še spremeni</p>
+      </Tooltip>
+    );
+  }
+  return (
+    <Label color={bungalovPaid ? 'green' : 'red'} size="sm">
+      {bungalovPaid ? 'Plačano' : 'Ni plačano'}
+    </Label>
+  );
+}
+
+/** Expanded detail panel explaining how a reservation's prices are derived. */
+function ReservationBreakdown({ breakdown }: { breakdown: ReservationBreakdownData }) {
+  const {
+    attendees,
+    days,
+    simuniPersons,
+    simuniTax,
+    accommodationFee,
+    simuni,
+    bungalov,
+    total,
+    accommodationFeeRate,
+    touristTaxExemptAge,
+  } = breakdown;
   const nonPausal = attendees.filter((a) => !a.person.naPausalu);
   const pausal = attendees.filter((a) => a.person.naPausalu);
 
@@ -257,7 +321,7 @@ function ReservationBreakdown({
                 <td className="whitespace-nowrap py-1 pr-3 text-right">
                   {d.taxPayers > 0 && (
                     <span className="text-brand/50">
-                      ({d.taxPayers} × {formatEur(touristTax)}){' '}
+                      ({d.taxPayers} × {formatEur(d.taxRate)}){' '}
                     </span>
                   )}
                   {formatEur(d.taxCost)}
@@ -281,7 +345,9 @@ function ReservationBreakdown({
           <dd className="font-semibold">{formatEur(simuni)}</dd>
           <p className="mt-0.5 text-[11px] text-brand/60">
             Osebe {formatEur(simuniPersons)} + taksa {formatEur(simuniTax)}
-            {touristTax > 0 && ` (${formatEur(touristTax)}/osebo/noč)`} + nastanitev{' '}
+            {(days[0]?.taxRate ?? 0) > 0 &&
+              ` (${formatEur(days[0]?.taxRate ?? 0)}/osebo/noč)`}{' '}
+            + nastanitev{' '}
             {formatEur(accommodationFee)}
             {accommodationFeeRate > 0 && ` (${formatEur(accommodationFeeRate)}/osebo)`}
           </p>
@@ -311,8 +377,50 @@ function ReservationBreakdown({
   );
 }
 
+/**
+ * Admin-only control for whether the bungalov payment has been settled —
+ * lives in the edit modal, so only ever rendered for admins.
+ */
+function BungalovPaidToggle({
+  reservation,
+  onUpdate,
+}: {
+  reservation: Reservation;
+  onUpdate: (bungalovPaid: boolean) => Promise<void>;
+}) {
+  const [saving, setSaving] = useState(false);
+
+  async function toggle() {
+    setSaving(true);
+    try {
+      await onUpdate(!reservation.bungalovPaid);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <label
+      className={`flex w-fit cursor-pointer items-center gap-2 rounded-xl border px-3 py-2 text-xs transition-colors ${
+        reservation.bungalovPaid
+          ? 'border-brand bg-brand/5 text-brand-dark'
+          : 'border-brand/15 bg-white text-brand-dark/80 hover:border-brand/30'
+      } ${saving ? 'opacity-60' : ''}`}
+    >
+      <input
+        type="checkbox"
+        checked={reservation.bungalovPaid}
+        onChange={toggle}
+        disabled={saving}
+        className="h-4 w-4 rounded border-brand/30 text-brand focus:ring-brand"
+      />
+      <span>Bungalov plačan</span>
+    </label>
+  );
+}
+
 export function AvailabilityPage({
-  settings,
+  settingsForYear,
   reservations,
   occupiedDays,
   currentUserId,
@@ -320,13 +428,13 @@ export function AvailabilityPage({
   onCreateReservation,
   onUpdateReservation,
   onDeleteReservation,
+  onUpdateReservationPayment,
 }: AvailabilityPageProps) {
   const { user } = useAuth();
   const bungalovPricing = useMemo(
-    () => computeBungalovPricing(settings, occupiedDays),
-    [settings, occupiedDays],
+    () => computeBungalovPricingByYear(settingsForYear, occupiedDays),
+    [settingsForYear, occupiedDays],
   );
-  const maxAdult = useMemo(() => maxAdultPrice(settings.seasons), [settings.seasons]);
 
   const [expandedId, setExpandedId] = useState<number | null>(null);
   // null = all families; otherwise restrict the table to one family's bookings.
@@ -339,6 +447,46 @@ export function AvailabilityPage({
   const [range, setRange] = useState<DateRange | undefined>(undefined);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+
+  // Admin-only audit trail for the reservation currently open in the modal.
+  const [history, setHistory] = useState<ReservationHistoryEntry[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!modalOpen || !editing || !isAdmin) {
+      setHistory([]);
+      return;
+    }
+    let cancelled = false;
+    setHistoryLoading(true);
+    setHistoryError(null);
+    api
+      .getReservationHistory(editing.id)
+      .then((res) => {
+        if (!cancelled) setHistory(res.history);
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setHistoryError(
+            err instanceof Error ? err.message : 'Napaka pri nalaganju zgodovine.',
+          );
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setHistoryLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [modalOpen, editing?.id, isAdmin]);
+
+  // The reservation being edited, kept in sync with the latest server state
+  // (e.g. right after toggling "Bungalov plačan") rather than the snapshot
+  // captured when the modal opened.
+  const liveEditing = editing
+    ? (reservations.find((r) => r.id === editing.id) ?? editing)
+    : null;
 
   // Admins can book on behalf of any family, so we need the full family list.
   const [families, setFamilies] = useState<Family[]>([]);
@@ -396,94 +544,14 @@ export function AvailabilityPage({
     [reservations, currentUserId, isAdmin],
   );
 
-  // For each day, how many reservations each family holds on it. A day's bungalov
-  // price is split among the distinct families present; within a family it is
-  // split again across that family's own (possibly overlapping) reservations, so
-  // the total billed for a day never exceeds its season-weighted share.
-  const familyReservationsPerDay = useMemo(() => {
-    const byDay = new Map<string, Map<number, number>>();
-    for (const reservation of reservations) {
-      for (const day of eachNightKeyInRange(reservation.startDay, reservation.endDay)) {
-        let perFamily = byDay.get(day);
-        if (!perFamily) {
-          perFamily = new Map();
-          byDay.set(day, perFamily);
-        }
-        perFamily.set(reservation.userId, (perFamily.get(reservation.userId) ?? 0) + 1);
-      }
-    }
-    return byDay;
-  }, [reservations]);
-
-  // Per-day, per-reservation breakdown driving both the table columns and the
-  // expandable detail panel. Each day contributes a Šimuni charge (per-person
-  // season prices for non-pavšal attendees + tourist tax) and a season-weighted
-  // bungalov share that is split between the families present that day.
-  const buildBreakdown = useMemo(() => {
-    return (reservation: Reservation) => {
-      const attendees = reservation.persons.map((person) => ({
-        person,
-        band: ageBand(computeAge(person.birthday)),
-        taxExempt: isTouristTaxExempt(settings, person.birthday),
-      }));
-      const taxPayerCount = touristTaxPayerCount(settings, reservation.persons);
-
-      const days = eachNightKeyInRange(reservation.startDay, reservation.endDay).map((day) => {
-        const season = seasonForDay(settings.seasons, day);
-        const perFamily = familyReservationsPerDay.get(day);
-        const fams = perFamily?.size ?? 1;
-        // This family's share is split across its own reservations covering the
-        // day, so overlapping bookings by one family don't bill the day twice.
-        const ownReservations = perFamily?.get(reservation.userId) ?? 1;
-
-        let personsCost = 0;
-        if (season) {
-          for (const { person, band } of attendees) {
-            if (!person.naPausalu) personsCost += seasonPriceForBand(season, band);
-          }
-        }
-        const taxCost = taxPayerCount * settings.touristTax;
-        const fullBungalov = bungalovPricing.priceForDay(day);
-
-        return {
-          day,
-          seasonName: season ? seasonLabel(season) : null,
-          discountPercent: season ? seasonDiscountPercent(season, maxAdult) : 0,
-          personsCost,
-          taxCost,
-          taxPayers: taxPayerCount,
-          fams,
-          fullBungalov,
-          bungalovCost: fullBungalov / fams / ownReservations,
-        };
-      });
-
-      const simuniPersons = days.reduce((sum, d) => sum + d.personsCost, 0);
-      const simuniTax = days.reduce((sum, d) => sum + d.taxCost, 0);
-      const accommodationFee = accommodationFeeTotal(settings, reservation.persons.length);
-      const bungalov = days.reduce((sum, d) => sum + d.bungalovCost, 0);
-      const simuni = simuniPersons + simuniTax + accommodationFee;
-
-      return {
-        attendees,
-        days,
-        simuniPersons,
-        simuniTax,
-        accommodationFee,
-        simuni,
-        bungalov,
-        total: simuni + bungalov,
-      };
-    };
-  }, [
-    familyReservationsPerDay,
-    settings.seasons,
-    settings.touristTax,
-    settings.accommodationFee,
-    settings.touristTaxExemptAge,
-    bungalovPricing,
-    maxAdult,
-  ]);
+  // Per-reservation breakdown driving both the table columns and the
+  // expandable detail panel — computed for every reservation at once (see
+  // buildReservationBreakdowns for why: family day-splitting needs the full
+  // list regardless of which rows are currently filtered into view).
+  const breakdownsById = useMemo(
+    () => buildReservationBreakdowns(reservations, settingsForYear, bungalovPricing),
+    [reservations, settingsForYear, bungalovPricing],
+  );
 
   // Distinct years present in the visible reservations, for the year filter chips.
   // Always includes the current year and the next one, even before any
@@ -492,7 +560,7 @@ export function AvailabilityPage({
     const currentYear = new Date().getFullYear();
     const years = new Set<number>([currentYear, currentYear + 1]);
     for (const reservation of visibleReservations) {
-      years.add(Number(reservation.startDay.slice(0, 4)));
+      years.add(yearOfDay(reservation.startDay));
     }
     return [...years].sort((a, b) => a - b);
   }, [visibleReservations]);
@@ -509,19 +577,25 @@ export function AvailabilityPage({
       filterYear === null
         ? visibleReservations
         : visibleReservations.filter(
-            (reservation) => Number(reservation.startDay.slice(0, 4)) === filterYear,
+            (reservation) => yearOfDay(reservation.startDay) === filterYear,
           ),
     [visibleReservations, filterYear],
   );
 
   const lines = useMemo(
     () =>
-      yearFilteredReservations.map((reservation) => ({
-        reservation,
-        days: nightCountInRange(reservation.startDay, reservation.endDay),
-        breakdown: buildBreakdown(reservation),
-      })),
-    [yearFilteredReservations, buildBreakdown],
+      yearFilteredReservations.map((reservation) => {
+        const breakdown = breakdownsById.get(reservation.id)!;
+        return {
+          reservation,
+          days: nightCountInRange(reservation.startDay, reservation.endDay),
+          breakdown,
+          // Until this reservation's amount is frozen by a price confirmation,
+          // it can still move as other families book the same year.
+          priceMayChange: !breakdown.frozen,
+        };
+      }),
+    [yearFilteredReservations, breakdownsById],
   );
 
   // Distinct families present in the (year-filtered) reservations, for the filter chips.
@@ -601,6 +675,12 @@ export function AvailabilityPage({
     const selectedDays = eachNightKeyInRange(startKey, endKey);
     if (selectedDays.length === 0) return null;
 
+    // Per-reservation charges (pavšal, tax rate, accommodation fee) bill under
+    // the check-in year; per-night charges below resolve their own year via
+    // bungalovPricing.poolForDay, so a selection spanning a year boundary still
+    // prices each night correctly.
+    const selectionSettings = settingsForYear(yearOfDay(startKey));
+
     // Build family presence map from all reservations except the one being edited.
     const familyNames = new Map<number, string>();
     const famsPerDay = new Map<string, Set<number>>();
@@ -632,49 +712,67 @@ export function AvailabilityPage({
       .map(([userId, days]) => ({ name: familyNames.get(userId) ?? '?', days }))
       .sort((a, b) => b.days - a.days);
 
-    // Project occupied days (existing + new selection) for weight computation.
+    // Project occupied days (existing + new selection) for weight computation,
+    // grouped per year so booking into one year never re-weighs another's pool.
     const projectedOccupied = new Set<string>();
     for (const [day] of famsPerDay) projectedOccupied.add(day);
     for (const day of selectedDays) projectedOccupied.add(day);
 
     const weightOf = (day: string) => {
-      if (maxAdult <= 0) return 1;
-      const season = seasonForDay(settings.seasons, day);
-      return season ? season.priceAdult / maxAdult : 1;
+      const pool = bungalovPricing.poolForDay(day);
+      return dayWeight(pool.settings.seasons, pool.maxAdult, day);
     };
-    let projectedTotalWeight = 0;
-    for (const day of projectedOccupied) projectedTotalWeight += weightOf(day);
+    const projectedWeightByYear = new Map<number, number>();
+    for (const day of projectedOccupied) {
+      const year = yearOfDay(day);
+      projectedWeightByYear.set(year, (projectedWeightByYear.get(year) ?? 0) + weightOf(day));
+    }
 
     // Persons attending this reservation (for Simuni calculation).
     const selectedPersons = availablePersons.filter((p) => selectedPersonIds.includes(p.id));
 
-    // Group selected days by season (preserving order of first appearance).
+    // Group selected days by year + season (preserving order of first
+    // appearance). Years matter here now that seasons can differ per year —
+    // and keeping the season object directly (rather than re-finding it by
+    // label later) avoids collisions once two years share a season's label.
     const groupOrder: string[] = [];
-    type GroupAccum = { seasonName: string | null; dayKeys: string[]; discountPercent: number };
+    type GroupAccum = {
+      year: number;
+      seasonName: string | null;
+      season: Season | null;
+      dayKeys: string[];
+    };
     const groupMap = new Map<string, GroupAccum>();
     for (const day of selectedDays) {
-      const season = seasonForDay(settings.seasons, day);
-      const key = season ? seasonLabel(season) : '__none__';
+      const year = yearOfDay(day);
+      const pool = bungalovPricing.poolForDay(day);
+      const season = seasonForDay(pool.settings.seasons, day);
+      const key = `${year}|${season ? seasonLabel(season) : '__none__'}`;
       if (!groupMap.has(key)) {
         groupOrder.push(key);
         groupMap.set(key, {
+          year,
           seasonName: season ? seasonLabel(season) : null,
+          season,
           dayKeys: [],
-          discountPercent: season ? seasonDiscountPercent(season, maxAdult) : 0,
         });
       }
       groupMap.get(key)!.dayKeys.push(day);
     }
 
-    const taxPayerCount = touristTaxPayerCount(settings, selectedPersons);
+    const taxPayerCount = touristTaxPayerCount(selectionSettings, selectedPersons);
 
     let totalBungalov = 0;
     let totalSimuniPersons = 0;
     let totalSimuniTax = 0;
 
     const seasonGroups: EstimateSeasonGroup[] = groupOrder.map((key) => {
-      const { seasonName, dayKeys, discountPercent } = groupMap.get(key)!;
+      const { year, seasonName, season, dayKeys } = groupMap.get(key)!;
       const dayCount = dayKeys.length;
+      const pool = bungalovPricing.poolForYear(year);
+      const yearSettings = settingsForYear(year);
+      const projectedWeight = projectedWeightByYear.get(year) ?? 0;
+      const discountPercent = season ? seasonDiscountPercent(season, pool.maxAdult) : 0;
 
       // Bungalov share for this group's days.
       let bungalovGroupTotal = 0;
@@ -684,25 +782,19 @@ export function AvailabilityPage({
         const fams = others + 1;
         famSum += fams;
         const w = weightOf(day);
-        const dayPrice =
-          projectedTotalWeight > 0
-            ? (bungalovPricing.discountedTotal * w) / projectedTotalWeight
-            : 0;
+        const dayPrice = projectedWeight > 0 ? (pool.discountedTotal * w) / projectedWeight : 0;
         bungalovGroupTotal += dayPrice / fams;
       }
       const avgFams = dayCount > 0 ? Math.round(famSum / dayCount) : 1;
       totalBungalov += bungalovGroupTotal;
 
       // Simuni per-person cost for this group (non-pavšal attendees only).
-      const seasonObj = seasonName
-        ? (settings.seasons.find((s) => seasonLabel(s) === seasonName) ?? null)
-        : null;
       const personRows: EstimatePersonRow[] = [];
-      if (seasonObj) {
+      if (season) {
         for (const person of selectedPersons) {
           if (person.naPausalu) continue;
           const band = ageBand(computeAge(person.birthday));
-          const nightlyPrice = seasonPriceForBand(seasonObj, band);
+          const nightlyPrice = seasonPriceForBand(season, band);
           const total = nightlyPrice * dayCount;
           personRows.push({
             personId: person.id,
@@ -716,7 +808,7 @@ export function AvailabilityPage({
         }
       }
 
-      const taxTotal = taxPayerCount * dayCount * settings.touristTax;
+      const taxTotal = taxPayerCount * dayCount * yearSettings.touristTax;
       totalSimuniTax += taxTotal;
 
       return {
@@ -730,7 +822,7 @@ export function AvailabilityPage({
       };
     });
 
-    const accommodationFee = accommodationFeeTotal(settings, selectedPersons.length);
+    const accommodationFee = accommodationFeeTotal(selectionSettings, selectedPersons.length);
     const simuni = totalSimuniPersons + totalSimuniTax + accommodationFee;
 
     return {
@@ -738,14 +830,18 @@ export function AvailabilityPage({
       selectedDays: selectedDays.length,
       overlappingFamilies,
       seasonGroups,
-      bungalovPausal: settings.pausalPrice,
-      bungalovDiscountPercent: settings.oneoffDiscountPercent,
-      bungalovDiscountAmount: settings.pausalPrice * (settings.oneoffDiscountPercent / 100),
-      bungalovDiscountedTotal: bungalovPricing.discountedTotal,
+      bungalovPausal: selectionSettings.pausalPrice,
+      bungalovDiscountPercent: selectionSettings.oneoffDiscountPercent,
+      bungalovDiscountAmount:
+        selectionSettings.pausalPrice * (selectionSettings.oneoffDiscountPercent / 100),
+      bungalovDiscountedTotal: bungalovPricing.poolForYear(yearOfDay(startKey)).discountedTotal,
       simuniPersons: totalSimuniPersons,
       simuniTax: totalSimuniTax,
       touristTaxPayers: taxPayerCount,
+      touristTaxRate: selectionSettings.touristTax,
+      touristTaxExemptAge: selectionSettings.touristTaxExemptAge,
       accommodationFee,
+      accommodationFeeRate: selectionSettings.accommodationFee,
       simuni,
       bungalov: totalBungalov,
       total: simuni + totalBungalov,
@@ -755,8 +851,7 @@ export function AvailabilityPage({
     editing,
     reservations,
     bungalovPricing,
-    settings,
-    maxAdult,
+    settingsForYear,
     selectedPersonIds,
     availablePersons,
   ]);
@@ -935,7 +1030,7 @@ export function AvailabilityPage({
           <>
             {/* ── Mobile card list (< sm) ─────────────────────────────── */}
             <div className="space-y-2 sm:hidden">
-              {filteredLines.map(({ reservation, days, breakdown }) => {
+              {filteredLines.map(({ reservation, days, breakdown, priceMayChange }) => {
                 const expanded = expandedId === reservation.id;
                 return (
                   <CardRow key={reservation.id}>
@@ -981,7 +1076,7 @@ export function AvailabilityPage({
                         />
                       </div>
                     </div>
-                    <div className="grid grid-cols-3 divide-x divide-brand/10 border-t border-brand/10">
+                    <div className="grid grid-cols-4 divide-x divide-brand/10 border-t border-brand/10">
                       <div className="px-3 py-2">
                         <p className="text-[10px] uppercase tracking-wide text-brand/50">Šimuni</p>
                         <p className="text-sm font-medium text-brand-dark">
@@ -1002,15 +1097,20 @@ export function AvailabilityPage({
                           {formatEur(breakdown.total)}
                         </p>
                       </div>
+                      <div className="px-3 py-2">
+                        <p className="text-[10px] uppercase tracking-wide text-brand/50">
+                          Plačilo
+                        </p>
+                        <PaymentColumnLabel
+                          priceMayChange={priceMayChange}
+                          bungalovPaid={reservation.bungalovPaid}
+                          year={yearOfDay(reservation.startDay)}
+                        />
+                      </div>
                     </div>
                     {expanded && (
-                      <div className="border-t border-brand/10 px-3 pb-3 pt-2">
-                        <ReservationBreakdown
-                          breakdown={breakdown}
-                          touristTax={settings.touristTax}
-                          accommodationFeeRate={settings.accommodationFee}
-                          touristTaxExemptAge={settings.touristTaxExemptAge}
-                        />
+                      <div className="space-y-2 border-t border-brand/10 px-3 pb-3 pt-2">
+                        <ReservationBreakdown breakdown={breakdown} />
                       </div>
                     )}
                   </CardRow>
@@ -1053,6 +1153,7 @@ export function AvailabilityPage({
                   <col className="w-37.5" />
                   <col className="w-37.5" />
                   <col className="w-37.5" />
+                  <col className="w-37.5" />
                   <col className="w-22.5" />
                 </colgroup>
                 <thead>
@@ -1061,11 +1162,12 @@ export function AvailabilityPage({
                     <th className="py-2 px-3 text-right font-medium">Za plačati Šimuni</th>
                     <th className="py-2 px-3 text-right font-medium">Za plačati bungalov</th>
                     <th className="py-2 px-3 text-right font-medium">Skupaj</th>
+                    <th className="py-2 px-3 font-medium">Plačilo</th>
                     <th className="py-2 pl-3" />
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-brand/10">
-                  {filteredLines.map(({ reservation, days, breakdown }) => {
+                  {filteredLines.map(({ reservation, days, breakdown, priceMayChange }) => {
                     const expanded = expandedId === reservation.id;
                     return (
                       <Fragment key={reservation.id}>
@@ -1091,6 +1193,13 @@ export function AvailabilityPage({
                           </td>
                           <td className="whitespace-nowrap py-2.5 px-3 text-right font-semibold text-brand-dark">
                             {formatEur(breakdown.total)}
+                          </td>
+                          <td className="py-2.5 px-3 align-middle">
+                            <PaymentColumnLabel
+                              priceMayChange={priceMayChange}
+                              bungalovPaid={reservation.bungalovPaid}
+                              year={yearOfDay(reservation.startDay)}
+                            />
                           </td>
                           <td className="py-2.5 pl-3">
                             <div className="flex items-center justify-end gap-1">
@@ -1124,13 +1233,8 @@ export function AvailabilityPage({
                         </tr>
                         {expanded && (
                           <tr>
-                            <td colSpan={5} className="pb-3 pt-1">
-                              <ReservationBreakdown
-                                breakdown={breakdown}
-                                touristTax={settings.touristTax}
-                                accommodationFeeRate={settings.accommodationFee}
-                                touristTaxExemptAge={settings.touristTaxExemptAge}
-                              />
+                            <td colSpan={6} className="pb-3 pt-1">
+                              <ReservationBreakdown breakdown={breakdown} />
                             </td>
                           </tr>
                         )}
@@ -1150,6 +1254,7 @@ export function AvailabilityPage({
                     <td className="whitespace-nowrap py-3 px-3 text-right font-semibold text-brand-dark">
                       {formatEur(totals.total)}
                     </td>
+                    <td className="py-3 px-3" />
                     <td className="py-3 pl-3" />
                   </tr>
                 </tfoot>
@@ -1430,9 +1535,9 @@ export function AvailabilityPage({
                           {selectionEstimate.touristTaxPayers} os. ×{' '}
                           {selectionEstimate.selectedDays}{' '}
                           {selectionEstimate.selectedDays === 1 ? 'noč' : 'noči'} ×{' '}
-                          {formatEur(settings.touristTax)}
+                          {formatEur(selectionEstimate.touristTaxRate)}
                           {selectionEstimate.touristTaxPayers < selectedPersonIds.length &&
-                            ` (otroci do ${settings.touristTaxExemptAge} let brez takse)`}
+                            ` (otroci do ${selectionEstimate.touristTaxExemptAge} let brez takse)`}
                         </span>
                       </span>
                       <span className="ml-2 shrink-0 font-medium text-brand-dark">
@@ -1446,7 +1551,8 @@ export function AvailabilityPage({
                       <span>
                         Enkratno plačilo nastanitve{' '}
                         <span className="text-brand/40">
-                          {selectedPersonIds.length} os. × {formatEur(settings.accommodationFee)}
+                          {selectedPersonIds.length} os. ×{' '}
+                          {formatEur(selectionEstimate.accommodationFeeRate)}
                         </span>
                       </span>
                       <span className="ml-2 shrink-0 font-medium text-brand-dark">
@@ -1480,11 +1586,48 @@ export function AvailabilityPage({
                 Bungalov se deli med vse družine prisotne ta dan.
               </p>
             </div>
+
+            {isAdmin && liveEditing && (
+              <BungalovPaidToggle
+                reservation={liveEditing}
+                onUpdate={(paid) => onUpdateReservationPayment(liveEditing.id, paid)}
+              />
+            )}
           </CardSection>
         ) : (
           <AlertBox variant="info" className="mt-4">
             Izberi obdobje za oceno cene.
           </AlertBox>
+        )}
+
+        {isAdmin && editing && (
+          <CardSection shade="medium" className="mt-4 space-y-2 p-3 text-xs text-brand-dark">
+            <p className="font-semibold uppercase tracking-wide text-brand/60">Zgodovina</p>
+            {historyLoading ? (
+              <p className="text-brand/60">Nalagam…</p>
+            ) : historyError ? (
+              <AlertBox>{historyError}</AlertBox>
+            ) : history.length === 0 ? (
+              <p className="text-brand/60">Ni sprememb.</p>
+            ) : (
+              <ul className="max-h-48 space-y-2 overflow-y-auto pr-1">
+                {history.map((entry) => (
+                  <li key={entry.id} className="rounded-lg bg-white p-2 ring-1 ring-brand/10">
+                    <p className="mb-0.5 flex items-center justify-between gap-2 text-[11px] text-brand/50">
+                      <span className="font-medium text-brand-dark">
+                        {entry.actorName}
+                        {entry.actorRole === 'admin' ? ' (admin)' : ''}
+                      </span>
+                      <span className="shrink-0">{formatDateTime(entry.createdAt)}</span>
+                    </p>
+                    {describeHistoryChanges(entry).map((line, index) => (
+                      <p key={index}>{line}</p>
+                    ))}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </CardSection>
         )}
 
         {formError && <AlertBox className="mt-3">{formError}</AlertBox>}

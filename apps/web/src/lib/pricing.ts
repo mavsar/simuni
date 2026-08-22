@@ -1,5 +1,108 @@
 import { computeAge, eachNightKeyInRange, parseDayKey } from './dates';
-import type { Person, Season, Settings } from './types';
+import type { Person, Reservation, Season, Settings } from './types';
+
+/** Earliest year the app prices. Mirrors MIN_SETTINGS_YEAR on the server. */
+export const MIN_SETTINGS_YEAR = 2026;
+
+/** The calendar year of a `YYYY-MM-DD` key. */
+export function yearOfDay(dayKey: string): number {
+  return Number(dayKey.slice(0, 4));
+}
+
+/** A reservation's amounts frozen when its year's prices were confirmed. */
+export type ReservationPriceSnapshot = {
+  reservationId: number;
+  bungalov: number;
+  simuni: number;
+};
+
+/** One calendar year's pricing settings. */
+export type YearSettings = Settings & {
+  year: number;
+  /** True once an admin has locked this year's prices. */
+  pricesConfirmed: boolean;
+  pricesConfirmedAt: string | null;
+  /** False while the values are inherited from another year and unsaved. */
+  stored: boolean;
+  updatedAt: string | null;
+  /** Frozen amounts per reservation, populated only once confirmed. */
+  snapshots: ReservationPriceSnapshot[];
+};
+
+function emptyYearSettings(year: number): YearSettings {
+  return {
+    year,
+    pausalPrice: 0,
+    oneoffDiscountPercent: 0,
+    touristTax: 0,
+    accommodationFee: 0,
+    touristTaxExemptAge: 0,
+    pricesConfirmed: false,
+    pricesConfirmedAt: null,
+    stored: false,
+    updatedAt: null,
+    seasons: [],
+    snapshots: []
+  };
+}
+
+/** Resolves a year to its settings, inheriting from a neighbouring year when missing. */
+export type YearSettingsLookup = (year: number) => YearSettings;
+
+/**
+ * Wraps the years the server returned in a lookup that never misses. The
+ * server already synthesises the configurable window (2026 … next year);
+ * this covers everything outside it — e.g. a reservation in a year nobody
+ * has priced — by inheriting the nearest earlier year, then the earliest
+ * known one.
+ *
+ * The returned function memoises, so the object it hands back for a given
+ * year is referentially stable for as long as `years` is. SettingsPage
+ * relies on that to avoid clobbering in-progress edits on unrelated
+ * re-renders.
+ */
+export function buildYearSettingsLookup(years: YearSettings[]): YearSettingsLookup {
+  const sorted = [...years].sort((a, b) => a.year - b.year);
+  const byYear = new Map(sorted.map((entry) => [entry.year, entry]));
+  const cache = new Map<number, YearSettings>();
+
+  return (year: number): YearSettings => {
+    const exact = byYear.get(year);
+    if (exact) return exact;
+
+    const cached = cache.get(year);
+    if (cached) return cached;
+
+    let inherited: YearSettings | undefined;
+    for (const entry of sorted) {
+      if (entry.year > year) break;
+      inherited = entry;
+    }
+    const source = inherited ?? sorted[0];
+    const value: YearSettings = source
+      ? {
+          ...source,
+          year,
+          pricesConfirmed: false,
+          pricesConfirmedAt: null,
+          stored: false,
+          snapshots: []
+        }
+      : emptyYearSettings(year);
+
+    cache.set(year, value);
+    return value;
+  };
+}
+
+/** The frozen amount for a reservation, once its year is confirmed — or null while open. */
+export function snapshotForReservation(
+  yearSettings: YearSettings,
+  reservationId: number
+): ReservationPriceSnapshot | null {
+  if (!yearSettings.pricesConfirmed) return null;
+  return yearSettings.snapshots.find((s) => s.reservationId === reservationId) ?? null;
+}
 
 export type PricingSummary = {
   /** Yearly rent before discount. */
@@ -132,46 +235,238 @@ export function dayWeight(seasons: Season[], maxAdult: number, dayKey: string): 
   return season.priceAdult / maxAdult;
 }
 
-export type BungalovPricing = {
-  /** Total rent (discounted pavšal) that all occupied days together cover. */
+/** One calendar year's share pool: its rent, its baseline, its occupied weight. */
+export type YearPool = {
+  /** The settings that priced this year — day-level lookups read from here. */
+  settings: YearSettings;
+  /** Discounted pavšal for this year: what its occupied days must cover. */
   discountedTotal: number;
-  /** Peak-season adult price used as the discount baseline. */
+  /** Peak-season adult price for this year, the season-discount baseline. */
   maxAdult: number;
-  /** Sum of every occupied day's weight. */
+  /** Sum of the weights of this year's occupied days. */
   totalWeight: number;
-  /** Season weight for a given day. */
+};
+
+export type BungalovPricingByYear = {
+  /**
+   * Every occupied year's discounted pavšal added together. Years nobody has
+   * booked contribute nothing — their rent isn't owed by anyone yet.
+   */
+  discountedTotal: number;
+  /** Pool for one calendar year; an unbooked year has totalWeight 0. */
+  poolForYear: (year: number) => YearPool;
+  /** Pool for the year a `YYYY-MM-DD` day falls in. */
+  poolForDay: (dayKey: string) => YearPool;
+  /** Season weight of a day, within its own year's pool. */
   weightForDay: (dayKey: string) => number;
   /** Full price for a day before splitting between families. */
   priceForDay: (dayKey: string) => number;
 };
 
 /**
- * Spreads the fixed (discounted) pavšal across the occupied days, weighting each
- * day by its season. The total across all days still equals the pavšal, but
- * peak-season days carry a larger share and off-season days a smaller one.
+ * Spreads each year's own (discounted) pavšal across that year's occupied
+ * days, weighting each day by that year's seasons. Years never mix: a 2027
+ * night can only ever carry a share of the 2027 pavšal, so booking 2027
+ * never re-prices a 2026 stay. `priceForDay` stays a flat
+ * `(dayKey) => number` — it routes to the right pool internally — so the
+ * calendar and the breakdown table can keep asking for any day, in any
+ * year, without knowing years exist.
  */
-export function computeBungalovPricing(
-  settings: Settings,
+export function computeBungalovPricingByYear(
+  settingsForYear: YearSettingsLookup,
   occupiedDays: Iterable<string>
-): BungalovPricing {
-  const discountedTotal = computePricing(settings, 0).discountedTotal;
-  const maxAdult = maxAdultPrice(settings.seasons);
+): BungalovPricingByYear {
+  const pools = new Map<number, YearPool>();
 
+  const poolForYear = (year: number): YearPool => {
+    let pool = pools.get(year);
+    if (!pool) {
+      const settings = settingsForYear(year);
+      pool = {
+        settings,
+        discountedTotal: computePricing(settings, 0).discountedTotal,
+        maxAdult: maxAdultPrice(settings.seasons),
+        totalWeight: 0
+      };
+      pools.set(year, pool);
+    }
+    return pool;
+  };
+
+  // Accumulate every occupied day's weight into its own year's pool.
   const weights = new Map<string, number>();
-  let totalWeight = 0;
+  const bookedYears = new Set<number>();
   for (const day of occupiedDays) {
-    const weight = dayWeight(settings.seasons, maxAdult, day);
+    const year = yearOfDay(day);
+    bookedYears.add(year);
+    const pool = poolForYear(year);
+    const weight = dayWeight(pool.settings.seasons, pool.maxAdult, day);
     weights.set(day, weight);
-    totalWeight += weight;
+    pool.totalWeight += weight;
   }
 
-  const weightForDay = (dayKey: string) =>
-    weights.get(dayKey) ?? dayWeight(settings.seasons, maxAdult, dayKey);
+  const poolForDay = (dayKey: string) => poolForYear(yearOfDay(dayKey));
 
-  const priceForDay = (dayKey: string) =>
-    totalWeight > 0 ? (discountedTotal * weightForDay(dayKey)) / totalWeight : 0;
+  const weightForDay = (dayKey: string) => {
+    const cached = weights.get(dayKey);
+    if (cached !== undefined) return cached;
+    const pool = poolForDay(dayKey);
+    return dayWeight(pool.settings.seasons, pool.maxAdult, dayKey);
+  };
 
-  return { discountedTotal, maxAdult, totalWeight, weightForDay, priceForDay };
+  const priceForDay = (dayKey: string) => {
+    const pool = poolForDay(dayKey);
+    return pool.totalWeight > 0
+      ? (pool.discountedTotal * weightForDay(dayKey)) / pool.totalWeight
+      : 0;
+  };
+
+  // Summed over the years that actually carry bookings, so a lazily created
+  // pool (asked for later by priceForDay) can never inflate the total.
+  let discountedTotal = 0;
+  for (const year of bookedYears) discountedTotal += poolForYear(year).discountedTotal;
+
+  return { discountedTotal, poolForYear, poolForDay, weightForDay, priceForDay };
+}
+
+export type BreakdownDay = {
+  day: string;
+  seasonName: string | null;
+  discountPercent: number;
+  personsCost: number;
+  taxCost: number;
+  taxPayers: number;
+  /** Tourist tax rate for this specific night's year. */
+  taxRate: number;
+  fams: number;
+  fullBungalov: number;
+  bungalovCost: number;
+};
+
+export type ReservationBreakdownData = {
+  attendees: Array<{ person: Person; band: AgeBand; taxExempt: boolean }>;
+  days: BreakdownDay[];
+  simuniPersons: number;
+  simuniTax: number;
+  accommodationFee: number;
+  simuni: number;
+  bungalov: number;
+  total: number;
+  accommodationFeeRate: number;
+  touristTaxExemptAge: number;
+  /** True once this reservation's amounts were frozen by a price confirmation. */
+  frozen: boolean;
+};
+
+/**
+ * Per-day, per-reservation breakdown driving the Razpoložljivost table and its
+ * expandable detail panel, for every reservation at once. Each day contributes
+ * a Šimuni charge (per-person season prices for non-pavšal attendees + tourist
+ * tax) and a season-weighted bungalov share split between the families present
+ * that day. Per-reservation charges (accommodation fee, tax-exempt age) bill
+ * under the check-in year; per-night charges (season price, tax rate,
+ * bungalov share) bill under each night's own year.
+ *
+ * Once a year's prices are confirmed, a reservation with a stored snapshot
+ * reports that frozen amount instead of recomputing it live — so a later
+ * booking change in that year can never move an already-settled family's
+ * bill. A reservation added after confirmation (no snapshot yet) still prices
+ * live, which is correct: nothing was promised final for it.
+ */
+export function buildReservationBreakdowns(
+  reservations: Reservation[],
+  settingsForYear: YearSettingsLookup,
+  bungalovPricing: BungalovPricingByYear
+): Map<number, ReservationBreakdownData> {
+  // For each day, how many reservations each family holds on it. A day's
+  // bungalov price is split among the distinct families present; within a
+  // family it is split again across that family's own (possibly overlapping)
+  // reservations, so the total billed for a day never exceeds its
+  // season-weighted share.
+  const familyReservationsPerDay = new Map<string, Map<number, number>>();
+  for (const reservation of reservations) {
+    for (const day of eachNightKeyInRange(reservation.startDay, reservation.endDay)) {
+      let perFamily = familyReservationsPerDay.get(day);
+      if (!perFamily) {
+        perFamily = new Map();
+        familyReservationsPerDay.set(day, perFamily);
+      }
+      perFamily.set(reservation.userId, (perFamily.get(reservation.userId) ?? 0) + 1);
+    }
+  }
+
+  const result = new Map<number, ReservationBreakdownData>();
+
+  for (const reservation of reservations) {
+    const yearSettings = settingsForYear(yearOfDay(reservation.startDay));
+
+    const attendees = reservation.persons.map((person) => ({
+      person,
+      band: ageBand(computeAge(person.birthday)),
+      taxExempt: isTouristTaxExempt(yearSettings, person.birthday)
+    }));
+    const taxPayerCount = touristTaxPayerCount(yearSettings, reservation.persons);
+
+    const days: BreakdownDay[] = eachNightKeyInRange(
+      reservation.startDay,
+      reservation.endDay
+    ).map((day) => {
+      const pool = bungalovPricing.poolForDay(day);
+      const daySettings = pool.settings;
+      const season = seasonForDay(daySettings.seasons, day);
+      const perFamily = familyReservationsPerDay.get(day);
+      const fams = perFamily?.size ?? 1;
+      // This family's share is split across its own reservations covering the
+      // day, so overlapping bookings by one family don't bill the day twice.
+      const ownReservations = perFamily?.get(reservation.userId) ?? 1;
+
+      let personsCost = 0;
+      if (season) {
+        for (const { person, band } of attendees) {
+          if (!person.naPausalu) personsCost += seasonPriceForBand(season, band);
+        }
+      }
+      const taxCost = taxPayerCount * daySettings.touristTax;
+      const fullBungalov = bungalovPricing.priceForDay(day);
+
+      return {
+        day,
+        seasonName: season ? seasonLabel(season) : null,
+        discountPercent: season ? seasonDiscountPercent(season, pool.maxAdult) : 0,
+        personsCost,
+        taxCost,
+        taxPayers: taxPayerCount,
+        taxRate: daySettings.touristTax,
+        fams,
+        fullBungalov,
+        bungalovCost: fullBungalov / fams / ownReservations
+      };
+    });
+
+    const simuniPersons = days.reduce((sum, d) => sum + d.personsCost, 0);
+    const simuniTax = days.reduce((sum, d) => sum + d.taxCost, 0);
+    const accommodationFee = accommodationFeeTotal(yearSettings, reservation.persons.length);
+    const liveBungalov = days.reduce((sum, d) => sum + d.bungalovCost, 0);
+    const liveSimuni = simuniPersons + simuniTax + accommodationFee;
+
+    const snapshot = snapshotForReservation(yearSettings, reservation.id);
+
+    result.set(reservation.id, {
+      attendees,
+      days,
+      simuniPersons,
+      simuniTax,
+      accommodationFee,
+      simuni: snapshot ? snapshot.simuni : liveSimuni,
+      bungalov: snapshot ? snapshot.bungalov : liveBungalov,
+      total: snapshot ? snapshot.simuni + snapshot.bungalov : liveSimuni + liveBungalov,
+      accommodationFeeRate: yearSettings.accommodationFee,
+      touristTaxExemptAge: yearSettings.touristTaxExemptAge,
+      frozen: snapshot !== null
+    });
+  }
+
+  return result;
 }
 
 export type SimuniCharge = {

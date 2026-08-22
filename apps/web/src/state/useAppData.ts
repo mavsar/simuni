@@ -2,30 +2,37 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { api } from '../lib/api';
 import { eachNightKeyInRange } from '../lib/dates';
+import {
+  buildYearSettingsLookup,
+  type YearSettings,
+  type YearSettingsLookup
+} from '../lib/pricing';
 import type { Reservation, ReservationRangeInput, Settings } from '../lib/types';
 
 export type AppData = {
-  settings: Settings;
+  /** Pricing settings for every configurable year, ascending. */
+  settingsYears: YearSettings[];
+  /** Settings for a year; never misses — inherits from a neighbouring year. */
+  settingsForYear: YearSettingsLookup;
   reservations: Reservation[];
   /** Union of all reserved nights (by start date) across every reservation. */
   occupiedDays: Set<string>;
   loading: boolean;
   error: string | null;
-  saveSettings: (next: Settings) => Promise<void>;
+  saveSettings: (year: number, next: Settings) => Promise<void>;
+  confirmPrices: (
+    year: number,
+    snapshots: Array<{ reservationId: number; bungalov: number; simuni: number }>
+  ) => Promise<void>;
+  unlockPrices: (year: number) => Promise<void>;
   createReservation: (input: ReservationRangeInput) => Promise<void>;
   updateReservation: (id: number, input: ReservationRangeInput) => Promise<void>;
   deleteReservation: (id: number) => Promise<void>;
+  updateReservationPayment: (id: number, bungalovPaid: boolean) => Promise<void>;
 };
 
 export function useAppData(): AppData {
-  const [settings, setSettings] = useState<Settings>({
-    pausalPrice: 0,
-    oneoffDiscountPercent: 0,
-    touristTax: 0,
-    accommodationFee: 0,
-    touristTaxExemptAge: 0,
-    seasons: []
-  });
+  const [settingsYears, setSettingsYears] = useState<YearSettings[]>([]);
   const [reservations, setReservations] = useState<Reservation[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -35,12 +42,12 @@ export function useAppData(): AppData {
 
     async function load() {
       try {
-        const [loadedSettings, reservationsResponse] = await Promise.all([
+        const [settingsResponse, reservationsResponse] = await Promise.all([
           api.getSettings(),
           api.getReservations()
         ]);
         if (cancelled) return;
-        setSettings(loadedSettings);
+        setSettingsYears(settingsResponse.years);
         setReservations(reservationsResponse.reservations);
       } catch (err) {
         if (!cancelled) {
@@ -59,6 +66,8 @@ export function useAppData(): AppData {
     };
   }, []);
 
+  const settingsForYear = useMemo(() => buildYearSettingsLookup(settingsYears), [settingsYears]);
+
   const occupiedDays = useMemo(() => {
     const days = new Set<string>();
     for (const reservation of reservations) {
@@ -69,10 +78,28 @@ export function useAppData(): AppData {
     return days;
   }, [reservations]);
 
-  const saveSettings = useCallback(async (next: Settings) => {
+  const saveSettings = useCallback(async (year: number, next: Settings) => {
     setError(null);
-    const saved = await api.updateSettings(next);
-    setSettings(saved);
+    const { years } = await api.updateSettings(year, next);
+    setSettingsYears(years);
+  }, []);
+
+  const confirmPrices = useCallback(
+    async (
+      year: number,
+      snapshots: Array<{ reservationId: number; bungalov: number; simuni: number }>
+    ) => {
+      setError(null);
+      const { years } = await api.confirmPrices(year, { snapshots });
+      setSettingsYears(years);
+    },
+    []
+  );
+
+  const unlockPrices = useCallback(async (year: number) => {
+    setError(null);
+    const { years } = await api.unlockPrices(year);
+    setSettingsYears(years);
   }, []);
 
   const createReservation = useCallback(async (input: ReservationRangeInput) => {
@@ -90,28 +117,41 @@ export function useAppData(): AppData {
     setReservations(next);
   }, []);
 
+  const updateReservationPayment = useCallback(async (id: number, bungalovPaid: boolean) => {
+    const { reservations: next } = await api.updateReservationPayment(id, { bungalovPaid });
+    setReservations(next);
+  }, []);
+
   return useMemo(
     () => ({
-      settings,
+      settingsYears,
+      settingsForYear,
       reservations,
       occupiedDays,
       loading,
       error,
       saveSettings,
+      confirmPrices,
+      unlockPrices,
       createReservation,
       updateReservation,
-      deleteReservation
+      deleteReservation,
+      updateReservationPayment
     }),
     [
-      settings,
+      settingsYears,
+      settingsForYear,
       reservations,
       occupiedDays,
       loading,
       error,
       saveSettings,
+      confirmPrices,
+      unlockPrices,
       createReservation,
       updateReservation,
-      deleteReservation
+      deleteReservation,
+      updateReservationPayment
     ]
   );
 }

@@ -83,7 +83,7 @@ export function CardSection({ shade = 'light', className, ...props }: CardSectio
 // `variant="info"`  → sky-blue (empty state hints, informational notes).
 
 type AlertBoxProps = HTMLAttributes<HTMLParagraphElement> & {
-  variant?: 'error' | 'info';
+  variant?: 'error' | 'info' | 'warning';
 };
 
 export function AlertBox({ variant = 'error', className, ...props }: AlertBoxProps) {
@@ -93,7 +93,9 @@ export function AlertBox({ variant = 'error', className, ...props }: AlertBoxPro
         'rounded-xl px-3 py-2 text-sm font-medium',
         variant === 'error'
           ? 'bg-red-50 text-red-700 ring-1 ring-red-200'
-          : 'bg-sky/70 font-normal text-brand/70',
+          : variant === 'warning'
+            ? 'bg-orange-50 text-orange-700 ring-1 ring-orange-200'
+            : 'bg-sky/70 font-normal text-brand/70',
         className
       )}
       {...props}

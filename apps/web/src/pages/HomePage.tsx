@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 
 import { AppHeader, type AppHeaderTab } from '../components/AppHeader';
+import { buildReservationBreakdowns, computeBungalovPricingByYear } from '../lib/pricing';
 import { useAuth } from '../state/AuthContext';
 import { useAppData } from '../state/useAppData';
 import { AvailabilityPage } from './AvailabilityPage';
@@ -12,16 +13,43 @@ export function HomePage() {
   const { user, logout } = useAuth();
   const [activeTab, setActiveTab] = useState<AppHeaderTab>('razpolozljivost');
   const {
-    settings,
+    settingsYears,
+    settingsForYear,
     reservations,
     occupiedDays,
     loading,
     error,
     saveSettings,
+    confirmPrices,
+    unlockPrices,
     createReservation,
     updateReservation,
-    deleteReservation
+    deleteReservation,
+    updateReservationPayment
   } = useAppData();
+
+  // Confirming a year freezes each of its reservations' amounts as of right
+  // now (see the plan's "Snapshot trust model"): later booking changes in
+  // that year can then never move an already-confirmed family's bill. The
+  // snapshot uses the same breakdown math AvailabilityPage displays with, so
+  // what gets frozen is exactly what the family was quoted.
+  const breakdownsById = useMemo(() => {
+    const bungalovPricing = computeBungalovPricingByYear(settingsForYear, occupiedDays);
+    return buildReservationBreakdowns(reservations, settingsForYear, bungalovPricing);
+  }, [reservations, settingsForYear, occupiedDays]);
+
+  const confirmYearPrices = useCallback(
+    async (year: number) => {
+      const snapshots = reservations
+        .filter((r) => Number(r.startDay.slice(0, 4)) === year)
+        .map((r) => {
+          const breakdown = breakdownsById.get(r.id)!;
+          return { reservationId: r.id, bungalov: breakdown.bungalov, simuni: breakdown.simuni };
+        });
+      await confirmPrices(year, snapshots);
+    },
+    [reservations, breakdownsById, confirmPrices]
+  );
 
   const isAdmin = user?.role === 'admin';
   // Guard against landing on a tab the current role can't access:
@@ -57,7 +85,7 @@ export function HomePage() {
             )}
             {resolvedTab === 'razpolozljivost' && user ? (
               <AvailabilityPage
-                settings={settings}
+                settingsForYear={settingsForYear}
                 reservations={reservations}
                 occupiedDays={occupiedDays}
                 currentUserId={user.id}
@@ -65,9 +93,16 @@ export function HomePage() {
                 onCreateReservation={createReservation}
                 onUpdateReservation={updateReservation}
                 onDeleteReservation={deleteReservation}
+                onUpdateReservationPayment={updateReservationPayment}
               />
             ) : (
-              <SettingsPage settings={settings} onSave={saveSettings} isAdmin={isAdmin} />
+              <SettingsPage
+                years={settingsYears}
+                onSave={saveSettings}
+                onConfirm={confirmYearPrices}
+                onUnlock={unlockPrices}
+                isAdmin={isAdmin}
+              />
             )}
           </>
         )}

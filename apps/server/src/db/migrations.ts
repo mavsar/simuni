@@ -204,6 +204,91 @@ const migrations: Migration[] = [
     sql: `
       ALTER TABLE settings ADD COLUMN tourist_tax_exempt_age INTEGER NOT NULL DEFAULT 12;
     `
+  },
+  {
+    // How a family paid Šimuni camp for a finished stay: '' (not answered
+    // yet), 'reception' (paid on check-out), or 'with_bungalov' (deferred to
+    // be settled together with the bungalov payment). Whether the bungalov
+    // payment itself has been settled is tracked separately — admins mark it.
+    name: "0013_reservation_payment",
+    sql: `
+      ALTER TABLE reservations ADD COLUMN simuni_payment TEXT NOT NULL DEFAULT '';
+      ALTER TABLE reservations ADD COLUMN bungalov_paid INTEGER NOT NULL DEFAULT 0;
+    `
+  },
+  {
+    // Pricing is decided per calendar year: every value that lived in the
+    // single-row `settings` table, and every season, is now scoped by year.
+    // `prices_confirmed_at` locks a year once an admin has settled its
+    // prices; NULL means still open. Confirming also snapshots each
+    // reservation's amounts in that year (reservation_price_snapshots), so a
+    // later booking change can never move an already-confirmed family's bill.
+    name: "0014_per_year_pricing",
+    sql: `
+      CREATE TABLE year_settings (
+        year INTEGER PRIMARY KEY,
+        pausal_price REAL NOT NULL DEFAULT 0,
+        oneoff_discount_percent REAL NOT NULL DEFAULT 0,
+        tourist_tax REAL NOT NULL DEFAULT 1.5,
+        accommodation_fee REAL NOT NULL DEFAULT 1.5,
+        tourist_tax_exempt_age INTEGER NOT NULL DEFAULT 12,
+        prices_confirmed_at TEXT,
+        updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+      );
+
+      INSERT INTO year_settings
+        (year, pausal_price, oneoff_discount_percent, tourist_tax,
+         accommodation_fee, tourist_tax_exempt_age, prices_confirmed_at)
+      SELECT 2026, pausal_price, oneoff_discount_percent, tourist_tax,
+             accommodation_fee, tourist_tax_exempt_age, NULL
+      FROM settings
+      WHERE id = 1;
+
+      INSERT OR IGNORE INTO year_settings (year) VALUES (2026);
+
+      DROP TABLE settings;
+
+      ALTER TABLE seasons ADD COLUMN year INTEGER NOT NULL DEFAULT 2026;
+      CREATE INDEX idx_seasons_year ON seasons (year, sort_order);
+
+      CREATE TABLE reservation_price_snapshots (
+        reservation_id INTEGER PRIMARY KEY REFERENCES reservations(id) ON DELETE CASCADE,
+        year INTEGER NOT NULL,
+        bungalov_amount REAL NOT NULL,
+        simuni_amount REAL NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+      );
+      CREATE INDEX idx_snapshots_year ON reservation_price_snapshots (year);
+    `
+  },
+  {
+    // Dropped the family self-report flow for how Šimuni was paid (on
+    // check-out vs. deferred). Only the admin-set "bungalov paid" flag
+    // remains.
+    name: "0015_remove_simuni_payment",
+    sql: `
+      ALTER TABLE reservations DROP COLUMN simuni_payment;
+    `
+  },
+  {
+    // Admin-visible audit trail for reservation edits: who changed what, and
+    // when. `changes` is a JSON blob whose shape depends on `action`
+    // ('created' | 'updated' | 'payment'). Deleting the reservation (or the
+    // acting user) cascades its history away — there is nothing left to show
+    // it against once the reservation itself is gone.
+    name: "0016_reservation_history",
+    sql: `
+      CREATE TABLE reservation_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        reservation_id INTEGER NOT NULL REFERENCES reservations(id) ON DELETE CASCADE,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        action TEXT NOT NULL,
+        changes TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+      );
+
+      CREATE INDEX idx_reservation_history_reservation ON reservation_history (reservation_id, created_at);
+    `
   }
 ];
 

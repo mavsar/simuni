@@ -1,3 +1,4 @@
+import type { YearSettings } from './pricing';
 import type {
   CreateFamilyInput,
   Family,
@@ -5,6 +6,8 @@ import type {
   ProfileAccountInput,
   ProfileInput,
   Reservation,
+  ReservationHistoryEntry,
+  ReservationPaymentInput,
   ReservationRangeInput,
   Settings,
   UpdateFamilyInput,
@@ -12,6 +15,10 @@ import type {
 } from './types';
 
 type ReservationsResponse = { reservations: Reservation[] };
+type SettingsResponse = { years: YearSettings[] };
+type ConfirmPricesInput = {
+  snapshots: Array<{ reservationId: number; bungalov: number; simuni: number }>;
+};
 
 const TOKEN_KEY = 'simuni_token';
 
@@ -104,13 +111,20 @@ export const api = {
   updateAccount: (input: ProfileAccountInput) =>
     request<User>('/api/profile/account', { method: 'PUT', body: JSON.stringify(input) }),
 
-  // Pricing settings
-  getSettings: () => request<Settings>('/api/settings'),
-  updateSettings: (settings: Settings) =>
-    request<Settings>('/api/settings', {
+  // Pricing settings (per year)
+  getSettings: () => request<SettingsResponse>('/api/settings'),
+  updateSettings: (year: number, settings: Settings) =>
+    request<SettingsResponse>(`/api/settings/${year}`, {
       method: 'PUT',
       body: JSON.stringify(settings)
     }),
+  confirmPrices: (year: number, input: ConfirmPricesInput) =>
+    request<SettingsResponse>(`/api/settings/${year}/confirm`, {
+      method: 'POST',
+      body: JSON.stringify(input)
+    }),
+  unlockPrices: (year: number) =>
+    request<SettingsResponse>(`/api/settings/${year}/unlock`, { method: 'POST' }),
 
   // Reservations
   getReservations: () => request<ReservationsResponse>('/api/reservations'),
@@ -125,5 +139,13 @@ export const api = {
       body: JSON.stringify(input)
     }),
   deleteReservation: (id: number) =>
-    request<ReservationsResponse>(`/api/reservations/${id}`, { method: 'DELETE' })
+    request<ReservationsResponse>(`/api/reservations/${id}`, { method: 'DELETE' }),
+  updateReservationPayment: (id: number, input: ReservationPaymentInput) =>
+    request<{ reservation: Reservation } & ReservationsResponse>(
+      `/api/reservations/${id}/payment`,
+      { method: 'PATCH', body: JSON.stringify(input) }
+    ),
+  // Admin only
+  getReservationHistory: (id: number) =>
+    request<{ history: ReservationHistoryEntry[] }>(`/api/reservations/${id}/history`)
 };
