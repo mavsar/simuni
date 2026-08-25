@@ -9,6 +9,8 @@ export type AuthUser = {
   username: string;
   familyName: string;
   role: Role;
+  email: string;
+  paymentExcluded: boolean;
 };
 
 export type AuthedRequest = Request & { user?: AuthUser };
@@ -18,10 +20,12 @@ type SessionRow = {
   username: string;
   family_name: string;
   role: Role;
+  email: string;
+  payment_excluded: number;
 };
 
 const selectSessionUser = sqlite.prepare(
-  `SELECT u.id, u.username, u.family_name, u.role
+  `SELECT u.id, u.username, u.family_name, u.role, u.email, u.payment_excluded
    FROM sessions s
    JOIN users u ON u.id = s.user_id
    WHERE s.token = ?`
@@ -52,7 +56,9 @@ export function authenticate(req: Request, res: Response, next: NextFunction): v
     id: row.id,
     username: row.username,
     familyName: row.family_name,
-    role: row.role
+    role: row.role,
+    email: row.email,
+    paymentExcluded: row.payment_excluded === 1
   };
   next();
 }

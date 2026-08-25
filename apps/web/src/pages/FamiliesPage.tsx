@@ -1,10 +1,13 @@
 import { Home, Pencil, Plus, ShieldCheck, Trash2 } from 'lucide-react';
 import { useEffect, useState, type ReactNode } from 'react';
+import { useMatch, useNavigate } from 'react-router-dom';
 
 import { MembersManager } from '../components/MembersManager';
 import { AlertBox, Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
+import { Checkbox } from '../components/ui/Checkbox';
 import { Combobox, type ComboboxOption } from '../components/ui/Combobox';
+import { ConfirmModal } from '../components/ui/ConfirmModal';
 import { Input } from '../components/ui/Input';
 import { Label } from '../components/ui/Label';
 import { api } from '../lib/api';
@@ -28,13 +31,17 @@ type FormState = {
   username: string;
   role: Role;
   password: string;
+  email: string;
+  paymentExcluded: boolean;
 };
 
 const EMPTY_FORM: FormState = {
   familyName: '',
   username: '',
   role: 'user',
-  password: ''
+  password: '',
+  email: '',
+  paymentExcluded: false
 };
 
 const ROLE_LABEL: Record<Role, string> = {
@@ -49,6 +56,7 @@ const ROLE_OPTIONS: ComboboxOption<Role>[] = [
 
 function toPersonInput(person: Person): PersonInput {
   return {
+    id: person.id,
     name: person.name,
     birthday: person.birthday,
     naPausalu: person.naPausalu,
@@ -59,17 +67,32 @@ function toPersonInput(person: Person): PersonInput {
 
 function toCarInput(car: Car): CarInput {
   return {
+    id: car.id,
     name: car.name,
     registrationPlate: car.registrationPlate
   };
 }
 
 export function FamiliesPage({ currentUserId }: FamiliesPageProps) {
+  const navigate = useNavigate();
+  // Which modal (if any) is open lives in the URL, so it's bookmarkable and
+  // the browser back button closes it.
+  const creating = useMatch('/druzine/nova-druzina') !== null;
+  const editMatch = useMatch('/druzine/:username/uredi');
+  const editUsername = editMatch?.params.username ?? null;
+
   const [families, setFamilies] = useState<Family[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [editing, setEditing] = useState<Family | null>(null);
-  const [creating, setCreating] = useState(false);
+  const editing =
+    editUsername !== null ? (families.find((f) => f.username === editUsername) ?? null) : null;
+
+  // A URL naming a family that doesn't exist (deleted, renamed) bounces back
+  // once the family list has actually loaded.
+  useEffect(() => {
+    if (editUsername === null || loading) return;
+    if (!editing) navigate('/druzine', { replace: true });
+  }, [editUsername, editing, loading, navigate]);
 
   async function refresh() {
     setError(null);
@@ -87,16 +110,21 @@ export function FamiliesPage({ currentUserId }: FamiliesPageProps) {
     void refresh();
   }, []);
 
-  async function handleDelete(family: Family) {
-    const confirmed = window.confirm(`Izbrišem družino ${family.familyName} (${family.username})?`);
-    if (!confirmed) return;
+  const [deleteTarget, setDeleteTarget] = useState<Family | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
 
+  async function confirmDelete() {
+    if (!deleteTarget) return;
+    setDeleteBusy(true);
     setError(null);
     try {
-      await api.deleteFamily(family.id);
+      await api.deleteFamily(deleteTarget.id);
+      setDeleteTarget(null);
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Brisanje ni uspelo.');
+    } finally {
+      setDeleteBusy(false);
     }
   }
 
@@ -107,6 +135,8 @@ export function FamiliesPage({ currentUserId }: FamiliesPageProps) {
       username: family.username,
       familyName: family.familyName,
       role: family.role,
+      email: family.email,
+      paymentExcluded: family.paymentExcluded,
       persons,
       cars
     });
@@ -122,7 +152,7 @@ export function FamiliesPage({ currentUserId }: FamiliesPageProps) {
             Upravljanje družin in njihovih članov.
           </p>
         </div>
-        <Button onClick={() => setCreating(true)} icon={Plus}>
+        <Button onClick={() => navigate('/druzine/nova-druzina')} icon={Plus}>
           Dodaj družino
         </Button>
       </div>
@@ -153,17 +183,27 @@ export function FamiliesPage({ currentUserId }: FamiliesPageProps) {
                     >
                       {ROLE_LABEL[family.role]}
                     </Label>
+                    {family.paymentExcluded && (
+                      <Label color="orange" size="sm">
+                        izvzeta iz plačila
+                      </Label>
+                    )}
                   </div>
                   <p className="mt-0.5 truncate text-sm text-brand/70">
                     Uporabniško ime: {family.username}
                   </p>
+                  {family.email && (
+                    <p className="mt-0.5 truncate text-sm text-brand/70">
+                      E-pošta: {family.email}
+                    </p>
+                  )}
                 </div>
                 <div className="flex shrink-0 items-center gap-1">
                   <Button
                     variant="transparent"
                     color="brand"
                     size="iconSm"
-                    onClick={() => setEditing(family)}
+                    onClick={() => navigate(`/druzine/${family.username}/uredi`)}
                     aria-label="Uredi družino"
                     title="Uredi družino"
                     icon={Pencil}
@@ -173,7 +213,7 @@ export function FamiliesPage({ currentUserId }: FamiliesPageProps) {
                     variant="transparent"
                     color="danger"
                     size="iconSm"
-                    onClick={() => handleDelete(family)}
+                    onClick={() => setDeleteTarget(family)}
                     disabled={family.id === currentUserId}
                     aria-label="Izbriši družino"
                     title={
@@ -203,18 +243,20 @@ export function FamiliesPage({ currentUserId }: FamiliesPageProps) {
           submitLabel="Ustvari"
           initial={EMPTY_FORM}
           requirePassword
-          onClose={() => setCreating(false)}
+          onClose={() => navigate('/druzine')}
           onSubmit={async (form) => {
             const input: CreateFamilyInput = {
               username: form.username,
               password: form.password,
               familyName: form.familyName,
               role: form.role,
+              email: form.email,
+              paymentExcluded: form.paymentExcluded,
               persons: [],
               cars: []
             };
             await api.createFamily(input);
-            setCreating(false);
+            navigate('/druzine');
             await refresh();
           }}
         />
@@ -228,26 +270,43 @@ export function FamiliesPage({ currentUserId }: FamiliesPageProps) {
             familyName: editing.familyName,
             username: editing.username,
             role: editing.role,
-            password: ''
+            password: '',
+            email: editing.email,
+            paymentExcluded: editing.paymentExcluded
           }}
           requirePassword={false}
-          onClose={() => setEditing(null)}
+          onClose={() => navigate('/druzine')}
           onSubmit={async (form) => {
             const input: UpdateFamilyInput = {
               username: form.username,
               familyName: form.familyName,
               role: form.role,
               password: form.password ? form.password : undefined,
+              email: form.email,
+              paymentExcluded: form.paymentExcluded,
               // Account-only edit: keep the family's existing members and cars.
               persons: editing.persons.map(toPersonInput),
               cars: editing.cars.map(toCarInput)
             };
             await api.updateFamily(editing.id, input);
-            setEditing(null);
+            navigate('/druzine');
             await refresh();
           }}
         />
       )}
+
+      <ConfirmModal
+        open={deleteTarget !== null}
+        title="Izbriši družino?"
+        destructive
+        busy={deleteBusy}
+        confirmLabel="Izbriši"
+        onConfirm={confirmDelete}
+        onCancel={() => setDeleteTarget(null)}
+      >
+        {deleteTarget &&
+          `Družina ${deleteTarget.familyName} (${deleteTarget.username}) bo trajno izbrisana, skupaj z vsemi njenimi rezervacijami, osebami in avtomobili.`}
+      </ConfirmModal>
     </div>
   );
 }
@@ -323,6 +382,15 @@ function FamilyFormModal({
             />
           </Field>
 
+          <Field label="E-pošta">
+            <Input
+              type="email"
+              autoComplete="off"
+              value={form.email}
+              onChange={(event) => update('email', event.target.value)}
+            />
+          </Field>
+
           <Field label={requirePassword ? 'Geslo' : 'Novo geslo (pustite prazno za nespremenjeno)'}>
             <Input
               type="password"
@@ -340,6 +408,16 @@ function FamilyFormModal({
               onChange={(role) => update('role', role)}
               aria-label="Vloga"
               options={ROLE_OPTIONS}
+            />
+          </div>
+
+          <div className="block">
+            <span className="mb-1.5 block text-sm font-medium text-brand-dark">Plačilo</span>
+            <Checkbox
+              checked={form.paymentExcluded}
+              onChange={(event) => update('paymentExcluded', event.target.checked)}
+              label="Izvzeta iz plačila"
+              description="Ne vidi cene bungalova in ne prejme e-pošte ob potrditvi cen."
             />
           </div>
 

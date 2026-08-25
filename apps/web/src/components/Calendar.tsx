@@ -25,6 +25,8 @@ export type CalendarProps = {
   /** Full (season-weighted) bungalov price for a day, before the family split. */
   priceForDay: (dayKey: string) => number;
   formatPrice: (amount: number) => string;
+  /** Payment-excluded families never see a bungalov price, including here. */
+  hidePrice?: boolean;
   /** Called when a user clicks a day belonging to an editable reservation. */
   onEditReservation: (reservation: Reservation) => void;
 };
@@ -94,6 +96,7 @@ export function Calendar({
   canEditAll = false,
   priceForDay,
   formatPrice,
+  hidePrice = false,
   onEditReservation
 }: CalendarProps) {
   const today = new Date();
@@ -281,7 +284,9 @@ export function Calendar({
                             </span>
                           </Tooltip>
                         )}
-                        <span className="text-[10px] font-medium">{formatPrice(share)}</span>
+                        {!hidePrice && (
+                          <span className="text-[10px] font-medium">{formatPrice(share)}</span>
+                        )}
                       </span>
                     </Fragment>
                   ))}

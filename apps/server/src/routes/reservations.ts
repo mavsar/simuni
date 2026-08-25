@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { authenticate, requireAdmin, type AuthedRequest } from "../auth/middleware.js";
 import { sqlite } from "../db/client.js";
+import { recordReservationHistory } from "../db/reservationHistory.js";
 
 export const reservationsRouter = Router();
 
@@ -15,6 +16,10 @@ type ReservationRow = {
   end_day: string;
   family_name: string;
   bungalov_paid: number;
+  checkin_mode: string;
+  online_checkin_email_sent: number;
+  history_count: number;
+  unseen_history_count: number;
 };
 
 type AttendeeRow = {
@@ -34,27 +39,56 @@ type CarRow = {
 
 const dayPattern = /^\d{4}-\d{2}-\d{2}$/;
 
+// Unseen is per viewer: created after *this* user's last view of *this*
+// reservation's history (reservation_history_views), or every row when they
+// have never viewed it at all — COALESCE to '' so "never viewed" sorts
+// before any real timestamp and every entry counts as unseen.
+const HISTORY_COUNT_COLUMNS = `
+  (SELECT COUNT(*) FROM reservation_history h WHERE h.reservation_id = r.id) AS history_count,
+  (SELECT COUNT(*) FROM reservation_history h
+     WHERE h.reservation_id = r.id
+       AND h.created_at > COALESCE(
+         (SELECT v.viewed_at FROM reservation_history_views v
+            WHERE v.reservation_id = r.id AND v.user_id = @viewerId),
+         ''
+       )) AS unseen_history_count
+`;
+// Whether the automated "online reservation" notice has already gone out —
+// drives the "Online checkin" / "Online checkin confirmed" label; a
+// reservation only ever gets one such send (reservation_reminders is a
+// dedup ledger keyed by reservation id, see onlineReservationEmails.ts).
+const ONLINE_CHECKIN_EMAIL_SENT_COLUMN = `
+  EXISTS(SELECT 1 FROM reservation_reminders rr WHERE rr.reservation_id = r.id) AS online_checkin_email_sent
+`;
 const selectAll = sqlite.prepare(
-  `SELECT r.id, r.user_id, r.start_day, r.end_day, u.family_name, r.bungalov_paid
+  `SELECT r.id, r.user_id, r.start_day, r.end_day, u.family_name, r.bungalov_paid, r.checkin_mode,
+          ${ONLINE_CHECKIN_EMAIL_SENT_COLUMN}, ${HISTORY_COUNT_COLUMNS}
    FROM reservations r
    JOIN users u ON u.id = r.user_id
    ORDER BY r.start_day`
 );
 const selectById = sqlite.prepare(
-  `SELECT r.id, r.user_id, r.start_day, r.end_day, u.family_name, r.bungalov_paid
+  `SELECT r.id, r.user_id, r.start_day, r.end_day, u.family_name, r.bungalov_paid, r.checkin_mode,
+          ${ONLINE_CHECKIN_EMAIL_SENT_COLUMN}, ${HISTORY_COUNT_COLUMNS}
    FROM reservations r
    JOIN users u ON u.id = r.user_id
-   WHERE r.id = ?`
+   WHERE r.id = @id`
 );
+const markHistoryViewed = sqlite.prepare(`
+  INSERT INTO reservation_history_views (reservation_id, user_id, viewed_at)
+  VALUES (@reservationId, @userId, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+  ON CONFLICT (reservation_id, user_id) DO UPDATE SET viewed_at = excluded.viewed_at
+`);
 const updateReservationPayment = sqlite.prepare(
   `UPDATE reservations SET bungalov_paid = @bungalovPaid WHERE id = @id`
 );
 const insertReservation = sqlite.prepare(
-  `INSERT INTO reservations (user_id, start_day, end_day)
-   VALUES (@userId, @startDay, @endDay)`
+  `INSERT INTO reservations (user_id, start_day, end_day, checkin_mode)
+   VALUES (@userId, @startDay, @endDay, @checkinMode)`
 );
 const updateReservation = sqlite.prepare(
-  `UPDATE reservations SET user_id = @userId, start_day = @startDay, end_day = @endDay WHERE id = @id`
+  `UPDATE reservations SET user_id = @userId, start_day = @startDay, end_day = @endDay, checkin_mode = @checkinMode
+   WHERE id = @id`
 );
 const deleteReservation = sqlite.prepare("DELETE FROM reservations WHERE id = ?");
 const userExists = sqlite.prepare("SELECT 1 FROM users WHERE id = ? LIMIT 1");
@@ -94,10 +128,6 @@ const selectFamilyCarIds = sqlite.prepare(
 );
 
 const selectFamilyName = sqlite.prepare("SELECT family_name FROM users WHERE id = ?");
-const insertHistory = sqlite.prepare(
-  `INSERT INTO reservation_history (reservation_id, user_id, action, changes)
-   VALUES (@reservationId, @userId, @action, @changes)`
-);
 const selectHistory = sqlite.prepare(
   `SELECT h.id, h.action, h.changes, h.created_at, u.family_name AS actor_name, u.role AS actor_role
    FROM reservation_history h
@@ -153,15 +183,6 @@ function familyNameOf(userId: number): string {
   return (selectFamilyName.get(userId) as { family_name: string } | undefined)?.family_name ?? "?";
 }
 
-function recordHistory(
-  reservationId: number,
-  userId: number,
-  action: string,
-  changes: Record<string, unknown>
-): void {
-  insertHistory.run({ reservationId, userId, action, changes: JSON.stringify(changes) });
-}
-
 /** Diff of an update — only the fields that actually changed. Empty means no-op. */
 function buildUpdateChanges(before: {
   startDay: string;
@@ -212,12 +233,16 @@ function toDto(row: ReservationRow) {
     ownerName: row.family_name,
     persons: attendeesFor(row.id),
     cars: carsFor(row.id),
-    bungalovPaid: row.bungalov_paid === 1
+    bungalovPaid: row.bungalov_paid === 1,
+    checkinMode: row.checkin_mode,
+    onlineCheckinEmailSent: row.online_checkin_email_sent === 1,
+    historyCount: row.history_count,
+    unseenHistoryCount: row.unseen_history_count
   };
 }
 
-function readAll() {
-  return (selectAll.all() as ReservationRow[]).map(toDto);
+function readAll(viewerId: number) {
+  return (selectAll.all({ viewerId }) as ReservationRow[]).map(toDto);
 }
 
 /** Keep only the person ids that actually belong to the owning family. */
@@ -261,14 +286,22 @@ const rangeSchema = z
     // Which family members are coming on this reservation.
     personIds: z.array(z.number().int().positive()).default([]),
     // Which family cars are coming on this reservation.
-    carIds: z.array(z.number().int().positive()).default([])
+    carIds: z.array(z.number().int().positive()).default([]),
+    // 'online': wants the automated pre-arrival notice, only visits
+    // reception at checkout. 'manual': checks in/out at reception themselves.
+    checkinMode: z.enum(["online", "manual"]).default("manual")
   })
   .refine((value) => value.startDay <= value.endDay, {
     message: "Začetni dan mora biti pred ali enak končnemu."
   });
 
-reservationsRouter.get("/", (_req, res) => {
-  res.json({ reservations: readAll() });
+reservationsRouter.get("/", (req, res) => {
+  const user = (req as AuthedRequest).user;
+  if (!user) {
+    res.status(401).json({ error: "Potrebna je prijava." });
+    return;
+  }
+  res.json({ reservations: readAll(user.id) });
 });
 
 reservationsRouter.post("/", (req, res) => {
@@ -302,7 +335,8 @@ reservationsRouter.post("/", (req, res) => {
     const info = insertReservation.run({
       userId: ownerId,
       startDay: parsed.data.startDay,
-      endDay: parsed.data.endDay
+      endDay: parsed.data.endDay,
+      checkinMode: parsed.data.checkinMode
     });
     const reservationId = Number(info.lastInsertRowid);
     replaceAttendees(reservationId, personIds);
@@ -314,7 +348,7 @@ reservationsRouter.post("/", (req, res) => {
 
   const personMap = resolvePersonNames(personIds);
   const carMap = resolveCarNames(carIds);
-  recordHistory(reservationId, user.id, "created", {
+  recordReservationHistory(reservationId, user.id, "created", {
     startDay: parsed.data.startDay,
     endDay: parsed.data.endDay,
     ownerName: familyNameOf(ownerId),
@@ -322,8 +356,8 @@ reservationsRouter.post("/", (req, res) => {
     cars: namesInOrder(carIds, carMap)
   });
 
-  const row = selectById.get(reservationId) as ReservationRow;
-  res.status(201).json({ reservation: toDto(row), reservations: readAll() });
+  const row = selectById.get({ id: reservationId, viewerId: user.id }) as ReservationRow;
+  res.status(201).json({ reservation: toDto(row), reservations: readAll(user.id) });
 });
 
 reservationsRouter.put("/:id", (req, res) => {
@@ -333,14 +367,19 @@ reservationsRouter.put("/:id", (req, res) => {
     return;
   }
 
-  const existing = selectById.get(id) as ReservationRow | undefined;
+  const user = (req as AuthedRequest).user;
+  if (!user) {
+    res.status(401).json({ error: "Potrebna je prijava." });
+    return;
+  }
+
+  const existing = selectById.get({ id, viewerId: user.id }) as ReservationRow | undefined;
   if (!existing) {
     res.status(404).json({ error: "Rezervacija ne obstaja." });
     return;
   }
 
-  const user = (req as AuthedRequest).user;
-  if (!user || (existing.user_id !== user.id && user.role !== "admin")) {
+  if (existing.user_id !== user.id && user.role !== "admin") {
     res.status(403).json({ error: "Lahko urejate samo svoje rezervacije." });
     return;
   }
@@ -379,7 +418,8 @@ reservationsRouter.put("/:id", (req, res) => {
       id,
       userId: ownerId,
       startDay: parsed.data.startDay,
-      endDay: parsed.data.endDay
+      endDay: parsed.data.endDay,
+      checkinMode: parsed.data.checkinMode
     });
     replaceAttendees(id, personIds);
     replaceReservationCars(id, carIds);
@@ -397,11 +437,11 @@ reservationsRouter.put("/:id", (req, res) => {
     carNames: namesInOrder(carIds, carMap)
   });
   if (Object.keys(changes).length > 0) {
-    recordHistory(id, user.id, "updated", changes);
+    recordReservationHistory(id, user.id, "updated", changes);
   }
 
-  const row = selectById.get(id) as ReservationRow;
-  res.json({ reservation: toDto(row), reservations: readAll() });
+  const row = selectById.get({ id, viewerId: user.id }) as ReservationRow;
+  res.json({ reservation: toDto(row), reservations: readAll(user.id) });
 });
 
 const paymentSchema = z.object({
@@ -415,7 +455,13 @@ reservationsRouter.patch("/:id/payment", requireAdmin, (req, res) => {
     return;
   }
 
-  const existing = selectById.get(id) as ReservationRow | undefined;
+  const user = (req as AuthedRequest).user;
+  if (!user) {
+    res.status(401).json({ error: "Potrebna je prijava." });
+    return;
+  }
+
+  const existing = selectById.get({ id, viewerId: user.id }) as ReservationRow | undefined;
   if (!existing) {
     res.status(404).json({ error: "Rezervacija ne obstaja." });
     return;
@@ -427,23 +473,17 @@ reservationsRouter.patch("/:id/payment", requireAdmin, (req, res) => {
     return;
   }
 
-  const user = (req as AuthedRequest).user;
-  if (!user) {
-    res.status(401).json({ error: "Potrebna je prijava." });
-    return;
-  }
-
   const wasPaid = existing.bungalov_paid === 1;
   updateReservationPayment.run({ id, bungalovPaid: parsed.data.bungalovPaid ? 1 : 0 });
 
   if (wasPaid !== parsed.data.bungalovPaid) {
-    recordHistory(id, user.id, "payment", {
+    recordReservationHistory(id, user.id, "payment", {
       bungalovPaid: { from: wasPaid, to: parsed.data.bungalovPaid }
     });
   }
 
-  const row = selectById.get(id) as ReservationRow;
-  res.json({ reservation: toDto(row), reservations: readAll() });
+  const row = selectById.get({ id, viewerId: user.id }) as ReservationRow;
+  res.json({ reservation: toDto(row), reservations: readAll(user.id) });
 });
 
 type HistoryRow = {
@@ -455,14 +495,35 @@ type HistoryRow = {
   actor_role: string;
 };
 
-reservationsRouter.get("/:id/history", requireAdmin, (req, res) => {
+reservationsRouter.get("/:id/history", (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) {
     res.status(400).json({ error: "Neveljaven ID." });
     return;
   }
 
+  const user = (req as AuthedRequest).user;
+  if (!user) {
+    res.status(401).json({ error: "Potrebna je prijava." });
+    return;
+  }
+
+  const existing = selectById.get({ id, viewerId: user.id }) as ReservationRow | undefined;
+  if (!existing) {
+    res.status(404).json({ error: "Rezervacija ne obstaja." });
+    return;
+  }
+
+  if (existing.user_id !== user.id && user.role !== "admin") {
+    res.status(403).json({ error: "Lahko vidite samo zgodovino svojih rezervacij." });
+    return;
+  }
+
   const rows = selectHistory.all(id) as HistoryRow[];
+  // Per-viewer: this clears only this user's own unseen badge, not anyone
+  // else's — an admin viewing doesn't dismiss the family's notice and vice
+  // versa.
+  markHistoryViewed.run({ reservationId: id, userId: user.id });
   res.json({
     history: rows.map((row) => ({
       id: row.id,
@@ -482,18 +543,23 @@ reservationsRouter.delete("/:id", (req, res) => {
     return;
   }
 
-  const existing = selectById.get(id) as ReservationRow | undefined;
+  const user = (req as AuthedRequest).user;
+  if (!user) {
+    res.status(401).json({ error: "Potrebna je prijava." });
+    return;
+  }
+
+  const existing = selectById.get({ id, viewerId: user.id }) as ReservationRow | undefined;
   if (!existing) {
     res.status(404).json({ error: "Rezervacija ne obstaja." });
     return;
   }
 
-  const user = (req as AuthedRequest).user;
-  if (!user || (existing.user_id !== user.id && user.role !== "admin")) {
+  if (existing.user_id !== user.id && user.role !== "admin") {
     res.status(403).json({ error: "Lahko brišete samo svoje rezervacije." });
     return;
   }
 
   deleteReservation.run(id);
-  res.json({ reservations: readAll() });
+  res.json({ reservations: readAll(user.id) });
 });

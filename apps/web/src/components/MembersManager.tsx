@@ -8,6 +8,7 @@ import { CarFormModal } from './CarFormModal';
 import { PersonFormModal } from './PersonFormModal';
 import { CardItem, CardSection } from './ui/Card';
 import { Button } from './ui/Button';
+import { ConfirmModal } from './ui/ConfirmModal';
 import { Label } from './ui/Label';
 
 export type MembersManagerProps = {
@@ -38,21 +39,38 @@ export function MembersManager({
   const [carEditor, setCarEditor] = useState<Editor>(null);
   const [error, setError] = useState<string | null>(null);
 
-  async function removePerson(index: number) {
+  // Indexes pending removal — a plain array splice hits the server
+  // immediately (onPersonsChange/onCarsChange persist right away), so both
+  // ask for confirmation first.
+  const [personToRemove, setPersonToRemove] = useState<number | null>(null);
+  const [carToRemove, setCarToRemove] = useState<number | null>(null);
+  const [removeBusy, setRemoveBusy] = useState(false);
+
+  async function confirmRemovePerson() {
+    if (personToRemove === null) return;
+    setRemoveBusy(true);
     setError(null);
     try {
-      await onPersonsChange(persons.filter((_, i) => i !== index));
+      await onPersonsChange(persons.filter((_, i) => i !== personToRemove));
+      setPersonToRemove(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Brisanje ni uspelo.');
+    } finally {
+      setRemoveBusy(false);
     }
   }
 
-  async function removeCar(index: number) {
+  async function confirmRemoveCar() {
+    if (carToRemove === null) return;
+    setRemoveBusy(true);
     setError(null);
     try {
-      await onCarsChange(cars.filter((_, i) => i !== index));
+      await onCarsChange(cars.filter((_, i) => i !== carToRemove));
+      setCarToRemove(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Brisanje ni uspelo.');
+    } finally {
+      setRemoveBusy(false);
     }
   }
 
@@ -125,7 +143,7 @@ export function MembersManager({
                     icon={X}
                     aria-label="Odstrani osebo"
                     title="Odstrani osebo"
-                    onClick={() => void removePerson(index)}
+                    onClick={() => setPersonToRemove(index)}
                   />
                 </CardItem>
               );
@@ -187,7 +205,7 @@ export function MembersManager({
                   icon={X}
                   aria-label="Odstrani avto"
                   title="Odstrani avto"
-                  onClick={() => void removeCar(index)}
+                  onClick={() => setCarToRemove(index)}
                 />
               </CardItem>
             ))}
@@ -228,6 +246,32 @@ export function MembersManager({
           }}
         />
       )}
+
+      <ConfirmModal
+        open={personToRemove !== null}
+        title="Odstrani osebo?"
+        destructive
+        busy={removeBusy}
+        confirmLabel="Odstrani"
+        onConfirm={confirmRemovePerson}
+        onCancel={() => setPersonToRemove(null)}
+      >
+        {personToRemove !== null &&
+          `${persons[personToRemove]?.name} bo odstranjen/a iz družine in iz vseh rezervacij, kjer je naveden/a.`}
+      </ConfirmModal>
+
+      <ConfirmModal
+        open={carToRemove !== null}
+        title="Odstrani avto?"
+        destructive
+        busy={removeBusy}
+        confirmLabel="Odstrani"
+        onConfirm={confirmRemoveCar}
+        onCancel={() => setCarToRemove(null)}
+      >
+        {carToRemove !== null &&
+          `${cars[carToRemove]?.name} (${cars[carToRemove]?.registrationPlate}) bo odstranjen iz družine in iz vseh rezervacij, kjer je naveden.`}
+      </ConfirmModal>
     </div>
   );
 }

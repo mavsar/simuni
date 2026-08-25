@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import { api } from '../lib/api';
+import { api, type EmailReport } from '../lib/api';
 import { eachNightKeyInRange } from '../lib/dates';
 import {
   buildYearSettingsLookup,
@@ -23,12 +23,14 @@ export type AppData = {
   confirmPrices: (
     year: number,
     snapshots: Array<{ reservationId: number; bungalov: number; simuni: number }>
-  ) => Promise<void>;
+  ) => Promise<EmailReport>;
   unlockPrices: (year: number) => Promise<void>;
   createReservation: (input: ReservationRangeInput) => Promise<void>;
   updateReservation: (id: number, input: ReservationRangeInput) => Promise<void>;
   deleteReservation: (id: number) => Promise<void>;
   updateReservationPayment: (id: number, bungalovPaid: boolean) => Promise<void>;
+  /** Refetches reservations — e.g. after viewing a reservation's history clears its unseen badge server-side. */
+  refreshReservations: () => Promise<void>;
 };
 
 export function useAppData(): AppData {
@@ -90,8 +92,9 @@ export function useAppData(): AppData {
       snapshots: Array<{ reservationId: number; bungalov: number; simuni: number }>
     ) => {
       setError(null);
-      const { years } = await api.confirmPrices(year, { snapshots });
+      const { years, emailReport } = await api.confirmPrices(year, { snapshots });
       setSettingsYears(years);
+      return emailReport;
     },
     []
   );
@@ -122,6 +125,11 @@ export function useAppData(): AppData {
     setReservations(next);
   }, []);
 
+  const refreshReservations = useCallback(async () => {
+    const { reservations: next } = await api.getReservations();
+    setReservations(next);
+  }, []);
+
   return useMemo(
     () => ({
       settingsYears,
@@ -136,7 +144,8 @@ export function useAppData(): AppData {
       createReservation,
       updateReservation,
       deleteReservation,
-      updateReservationPayment
+      updateReservationPayment,
+      refreshReservations
     }),
     [
       settingsYears,
@@ -151,7 +160,8 @@ export function useAppData(): AppData {
       createReservation,
       updateReservation,
       deleteReservation,
-      updateReservationPayment
+      updateReservationPayment,
+      refreshReservations
     ]
   );
 }

@@ -1,11 +1,24 @@
-import { CalendarCheck, Home, LogOut, Menu, ReceiptEuro, Settings, UserRound, X } from 'lucide-react';
-import { useEffect, useState, type ComponentType, type SVGProps } from 'react';
+import { cx } from 'class-variance-authority';
+import {
+  CalendarCheck,
+  ChevronDown,
+  Home,
+  LogOut,
+  Mail,
+  Menu,
+  ReceiptEuro,
+  Settings,
+  UserRound,
+  X,
+} from 'lucide-react';
+import { useEffect, useRef, useState, type ComponentType, type SVGProps } from 'react';
 
 import { SimuniLogo } from './SimuniLogo';
 import { Button } from './ui/Button';
-import { Tab, Tabs } from './ui/Tabs';
+import { Tab, Tabs, tabVariants } from './ui/Tabs';
 
 export type AppHeaderTab = 'razpolozljivost' | 'nastavitve' | 'druzine' | 'profil';
+export type SettingsSection = 'cene' | 'emaili';
 
 export type AppHeaderProps = {
   title?: string;
@@ -14,6 +27,9 @@ export type AppHeaderProps = {
   onLogout?: () => void;
   isAdmin?: boolean;
   userName?: string;
+  /** Which "Nastavitve" subpage is active. Only meaningful for admins. */
+  settingsSection?: SettingsSection;
+  onSettingsSectionChange?: (section: SettingsSection) => void;
 };
 
 type NavItem = {
@@ -22,6 +38,92 @@ type NavItem = {
   Icon: ComponentType<SVGProps<SVGSVGElement> & { size?: number | string }>;
 };
 
+const SETTINGS_SECTIONS: Array<{
+  value: SettingsSection;
+  label: string;
+  Icon: ComponentType<SVGProps<SVGSVGElement> & { size?: number | string }>;
+}> = [
+  { value: 'cene', label: 'Cene', Icon: ReceiptEuro },
+  { value: 'emaili', label: 'Emaili', Icon: Mail },
+];
+
+type NastavitveDropdownProps = {
+  active: boolean;
+  section: SettingsSection;
+  onSelect: (section: SettingsSection) => void;
+};
+
+/** Desktop-only "Nastavitve" nav item: opens a popover with its two subpages. */
+function NastavitveDropdown({ active, section, onSelect }: NastavitveDropdownProps) {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onPointerDown(event: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    }
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') setOpen(false);
+    }
+    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [open]);
+
+  return (
+    <div ref={containerRef} className="relative">
+      <button
+        type="button"
+        role="tab"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        data-active={active}
+        onClick={() => setOpen((prev) => !prev)}
+        className={tabVariants({ variant: 'underline', size: 'md' })}
+      >
+        <Settings size={18} className="shrink-0" aria-hidden />
+        Nastavitve
+        <ChevronDown
+          size={14}
+          className={cx('shrink-0 transition-transform', open && 'rotate-180')}
+          aria-hidden
+        />
+      </button>
+
+      {open && (
+        <div className="absolute left-0 top-full z-50 mt-2 w-44 rounded-xl border border-brand/15 bg-white p-1 shadow-lg ring-1 ring-brand/5">
+          {SETTINGS_SECTIONS.map(({ value, label, Icon }) => {
+            const isSelected = active && section === value;
+            return (
+              <button
+                key={value}
+                type="button"
+                onClick={() => {
+                  onSelect(value);
+                  setOpen(false);
+                }}
+                className={cx(
+                  'flex w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left text-sm transition-colors',
+                  isSelected ? 'bg-brand text-white' : 'text-brand-dark hover:bg-sky',
+                )}
+              >
+                <Icon size={16} className="shrink-0" aria-hidden />
+                {label}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function AppHeader({
   title = 'Šimuni Bungalov 41',
   activeTab,
@@ -29,6 +131,8 @@ export function AppHeader({
   onLogout,
   isAdmin = false,
   userName,
+  settingsSection = 'cene',
+  onSettingsSectionChange,
 }: AppHeaderProps) {
   const [menuOpen, setMenuOpen] = useState(false);
 
@@ -95,11 +199,20 @@ export function AppHeader({
               onValueChange={(value) => onTabChange(value as AppHeaderTab)}
               aria-label="Glavna navigacija"
             >
-              {navItems.map(({ value, label, Icon }) => (
-                <Tab key={value} value={value} icon={Icon}>
-                  {label}
-                </Tab>
-              ))}
+              {navItems.map(({ value, label, Icon }) =>
+                value === 'nastavitve' && isAdmin ? (
+                  <NastavitveDropdown
+                    key={value}
+                    active={activeTab === 'nastavitve'}
+                    section={settingsSection}
+                    onSelect={(section) => onSettingsSectionChange?.(section)}
+                  />
+                ) : (
+                  <Tab key={value} value={value} icon={Icon}>
+                    {label}
+                  </Tab>
+                ),
+              )}
             </Tabs>
           </div>
 
@@ -156,9 +269,40 @@ export function AppHeader({
             aria-label="Mobilna navigacija"
             className="flex flex-1 flex-col items-center justify-center gap-3 px-8"
           >
-            {navItems.map(({ value, label, Icon }) => {
+            {navItems.flatMap(({ value, label, Icon }) => {
+              if (value === 'nastavitve' && isAdmin) {
+                return SETTINGS_SECTIONS.map((option) => {
+                  const isActive = activeTab === 'nastavitve' && settingsSection === option.value;
+                  return (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => {
+                        onSettingsSectionChange?.(option.value);
+                        setMenuOpen(false);
+                      }}
+                      className={`group flex w-full max-w-xs items-center gap-4 rounded-2xl px-6 py-4 text-lg font-semibold transition-all duration-200 ${
+                        isActive
+                          ? 'bg-white/15 text-white ring-1 ring-white/20'
+                          : 'text-white/60 hover:bg-white/10 hover:text-white'
+                      }`}
+                    >
+                      <option.Icon
+                        size={22}
+                        className={`shrink-0 transition-colors ${isActive ? 'text-white' : 'text-white/50 group-hover:text-white'}`}
+                        aria-hidden
+                      />
+                      {option.label}
+                      {isActive && (
+                        <span className="ml-auto h-2 w-2 rounded-full bg-white" aria-hidden />
+                      )}
+                    </button>
+                  );
+                });
+              }
+
               const isActive = activeTab === value;
-              return (
+              return [
                 <button
                   key={value}
                   type="button"
@@ -178,8 +322,8 @@ export function AppHeader({
                   {isActive && (
                     <span className="ml-auto h-2 w-2 rounded-full bg-white" aria-hidden />
                   )}
-                </button>
-              );
+                </button>,
+              ];
             })}
           </nav>
 

@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { authenticate, requireAdmin } from "../auth/middleware.js";
 import { sqlite } from "../db/client.js";
+import { sendPriceConfirmationEmails } from "../mail/priceEmails.js";
 
 export const settingsRouter = Router();
 
@@ -336,7 +337,7 @@ settingsRouter.put("/:year", requireAdmin, (req, res) => {
   res.json({ years: readAllYears() });
 });
 
-settingsRouter.post("/:year/confirm", requireAdmin, (req, res) => {
+settingsRouter.post("/:year/confirm", requireAdmin, async (req, res) => {
   const year = parseYearParam(req.params.year);
   if (!year.success) {
     res.status(400).json({ error: year.error.issues[0]?.message ?? "Neveljavno leto." });
@@ -350,7 +351,8 @@ settingsRouter.post("/:year/confirm", requireAdmin, (req, res) => {
   }
 
   confirmYear(year.data, parsed.data.snapshots);
-  res.json({ years: readAllYears() });
+  const emailReport = await sendPriceConfirmationEmails(year.data, parsed.data.snapshots);
+  res.json({ years: readAllYears(), emailReport });
 });
 
 settingsRouter.post("/:year/unlock", requireAdmin, (req, res) => {

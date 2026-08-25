@@ -1,5 +1,6 @@
 import { Pencil, UserRound } from 'lucide-react';
 import { useState } from 'react';
+import { useMatch, useNavigate } from 'react-router-dom';
 
 import { MembersManager } from '../components/MembersManager';
 import { Button } from '../components/ui/Button';
@@ -11,13 +12,17 @@ import { useAuth } from '../state/AuthContext';
 
 export function MyProfilePage() {
   const { user, refreshUser } = useAuth();
-  const [editingAccount, setEditingAccount] = useState(false);
+  const navigate = useNavigate();
+  // Whether the account modal is open lives in the URL, so it's bookmarkable
+  // and the browser back button closes it.
+  const editingAccount = useMatch('/profil/racun') !== null;
 
   if (!user) {
     return null;
   }
 
   const persons: PersonInput[] = user.persons.map((person) => ({
+    id: person.id,
     name: person.name,
     birthday: person.birthday,
     naPausalu: person.naPausalu,
@@ -26,6 +31,7 @@ export function MyProfilePage() {
   }));
 
   const cars: CarInput[] = user.cars.map((car) => ({
+    id: car.id,
     name: car.name,
     registrationPlate: car.registrationPlate
   }));
@@ -60,7 +66,7 @@ export function MyProfilePage() {
             color="brand"
             size="iconSm"
             icon={Pencil}
-            onClick={() => setEditingAccount(true)}
+            onClick={() => navigate('/profil/racun')}
             aria-label="Uredi račun"
             title="Uredi račun"
             className="shrink-0 text-brand"
@@ -78,10 +84,10 @@ export function MyProfilePage() {
       {editingAccount && (
         <AccountModal
           username={user.username}
-          onClose={() => setEditingAccount(false)}
+          onClose={() => navigate('/profil')}
           onSaved={async () => {
             await refreshUser();
-            setEditingAccount(false);
+            navigate('/profil');
           }}
         />
       )}

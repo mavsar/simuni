@@ -1,4 +1,4 @@
-import { Route, Routes } from "react-router-dom";
+import { Navigate, Route, Routes } from "react-router-dom";
 
 import { HomePage } from "./pages/HomePage";
 import { LoginPage } from "./pages/LoginPage";
@@ -16,12 +16,40 @@ export default function App() {
   }
 
   if (!user) {
-    return <LoginPage />;
+    return (
+      <Routes>
+        <Route path="/prijava" element={<LoginPage />} />
+        <Route path="*" element={<Navigate to="/prijava" replace />} />
+      </Routes>
+    );
   }
+
+  const isAdmin = user.role === "admin";
+
+  const familyRoutes = (
+    <>
+      <Route path="/druzine" element={<HomePage />} />
+      <Route path="/druzine/nova-druzina" element={<HomePage />} />
+      <Route path="/druzine/:username/uredi" element={<HomePage />} />
+    </>
+  );
+  const profileRoutes = (
+    <>
+      <Route path="/profil" element={<HomePage />} />
+      <Route path="/profil/racun" element={<HomePage />} />
+    </>
+  );
 
   return (
     <Routes>
-      <Route path="/" element={<HomePage />} />
+      <Route path="/razpolozljivost" element={<HomePage />} />
+      <Route path="/razpolozljivost/nova-rezervacija" element={<HomePage />} />
+      <Route path="/razpolozljivost/rezervacija/:slug" element={<HomePage />} />
+      <Route path="/nastavitve" element={<HomePage />} />
+      <Route path="/nastavitve/cene" element={<HomePage />} />
+      <Route path="/nastavitve/emaili" element={<HomePage />} />
+      {isAdmin ? familyRoutes : profileRoutes}
+      <Route path="*" element={<Navigate to="/razpolozljivost" replace />} />
     </Routes>
   );
 }

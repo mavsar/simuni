@@ -22,17 +22,19 @@ type FamilyRow = {
   username: string;
   family_name: string;
   role: Role;
+  email: string;
+  payment_excluded: number;
 };
 
 const selectAll = sqlite.prepare(
-  "SELECT id, username, family_name, role FROM users ORDER BY role, family_name"
+  "SELECT id, username, family_name, role, email, payment_excluded FROM users ORDER BY role, family_name"
 );
 const selectById = sqlite.prepare(
-  "SELECT id, username, family_name, role FROM users WHERE id = ?"
+  "SELECT id, username, family_name, role, email, payment_excluded FROM users WHERE id = ?"
 );
 const insertFamily = sqlite.prepare(
-  `INSERT INTO users (username, password_hash, family_name, role)
-   VALUES (@username, @passwordHash, @familyName, @role)`
+  `INSERT INTO users (username, password_hash, family_name, role, email, payment_excluded)
+   VALUES (@username, @passwordHash, @familyName, @role, @email, @paymentExcluded)`
 );
 const deleteFamilyStmt = sqlite.prepare("DELETE FROM users WHERE id = ?");
 const countAdmins = sqlite.prepare("SELECT COUNT(*) AS count FROM users WHERE role = 'admin'");
@@ -43,6 +45,8 @@ function toDto(row: FamilyRow) {
     username: row.username,
     familyName: row.family_name,
     role: row.role,
+    email: row.email,
+    paymentExcluded: row.payment_excluded === 1,
     persons: personsForFamily(row.id),
     cars: carsForFamily(row.id)
   };
@@ -57,11 +61,20 @@ function usernameTaken(username: string, exceptId?: number): boolean {
 
 const roleSchema = z.enum(["admin", "user"]);
 
+const emailSchema = z
+  .string()
+  .trim()
+  .email("Neveljaven e-poštni naslov.")
+  .or(z.literal(""))
+  .default("");
+
 const createSchema = z.object({
   username: z.string().trim().min(3, "Uporabniško ime mora imeti vsaj 3 znake."),
   password: z.string().min(4, "Geslo mora imeti vsaj 4 znake."),
   familyName: z.string().trim().min(1, "Vnesite ime družine."),
   role: roleSchema,
+  email: emailSchema,
+  paymentExcluded: z.boolean().default(false),
   persons: z.array(personSchema).default([]),
   cars: z.array(carSchema).default([])
 });
@@ -71,6 +84,8 @@ const updateSchema = z.object({
   password: z.string().min(4, "Geslo mora imeti vsaj 4 znake.").optional().or(z.literal("")),
   familyName: z.string().trim().min(1, "Vnesite ime družine."),
   role: roleSchema,
+  email: emailSchema,
+  paymentExcluded: z.boolean().default(false),
   persons: z.array(personSchema).default([]),
   cars: z.array(carSchema).default([])
 });
@@ -98,7 +113,9 @@ familiesRouter.post("/", (req, res) => {
       username: data.username,
       passwordHash: hashPassword(data.password),
       familyName: data.familyName,
-      role: data.role
+      role: data.role,
+      email: data.email,
+      paymentExcluded: data.paymentExcluded ? 1 : 0
     });
     const familyId = Number(info.lastInsertRowid);
     replacePersons(familyId, data.persons);
@@ -146,12 +163,20 @@ familiesRouter.put("/:id", (req, res) => {
 
   const data = parsed.data;
   const update = sqlite.transaction(() => {
-    const fields = ["username = @username", "family_name = @familyName", "role = @role"];
+    const fields = [
+      "username = @username",
+      "family_name = @familyName",
+      "role = @role",
+      "email = @email",
+      "payment_excluded = @paymentExcluded"
+    ];
     const params: Record<string, unknown> = {
       id,
       username: data.username,
       familyName: data.familyName,
-      role: data.role
+      role: data.role,
+      email: data.email,
+      paymentExcluded: data.paymentExcluded ? 1 : 0
     };
 
     if (data.password) {

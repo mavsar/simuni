@@ -289,6 +289,99 @@ const migrations: Migration[] = [
 
       CREATE INDEX idx_reservation_history_reservation ON reservation_history (reservation_id, created_at);
     `
+  },
+  {
+    // A family's contact address for the "prices confirmed" email, and a
+    // hidden admin-only flag for families who don't pay the bungalov share:
+    // they never see a bungalov amount and are skipped when that email goes
+    // out. Not UNIQUE — most rows start out blank.
+    name: "0017_family_email_and_payment_exclusion",
+    sql: `
+      ALTER TABLE users ADD COLUMN email TEXT NOT NULL DEFAULT '';
+      ALTER TABLE users ADD COLUMN payment_excluded INTEGER NOT NULL DEFAULT 0;
+    `
+  },
+  {
+    // Admin-editable overrides for the app's automated emails. A missing row
+    // means "use the built-in default" — only a row here means an admin has
+    // customized that email's subject/body.
+    name: "0018_email_templates",
+    sql: `
+      CREATE TABLE email_templates (
+        type TEXT PRIMARY KEY,
+        subject TEXT NOT NULL,
+        body TEXT NOT NULL,
+        updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+      );
+    `
+  },
+  {
+    // A fixed address some templates always send to (e.g. the camping
+    // reception for the online-reservation notice) — distinct from a
+    // family's own contact email. Blank for templates that don't need one.
+    name: "0019_email_template_recipient",
+    sql: `
+      ALTER TABLE email_templates ADD COLUMN recipient TEXT NOT NULL DEFAULT '';
+    `
+  },
+  {
+    // Dedup/catch-up ledger for the "online reservation" reminder: a row
+    // means that reservation's notice has already gone out, so a daily
+    // catch-up check never sends it twice.
+    name: "0020_reservation_reminders",
+    sql: `
+      CREATE TABLE reservation_reminders (
+        reservation_id INTEGER PRIMARY KEY REFERENCES reservations(id) ON DELETE CASCADE,
+        sent_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+      );
+    `
+  },
+  {
+    // When an admin last opened this reservation's history — drives the
+    // unseen-event badge on the history button. NULL means never viewed, so
+    // every existing entry counts as unseen until someone actually looks.
+    name: "0021_reservation_history_viewed_at",
+    sql: `
+      ALTER TABLE reservations ADD COLUMN history_viewed_at TEXT;
+    `
+  },
+  {
+    // Superseding 0021: "last viewed" needs to be per-viewer, not one
+    // reservation-wide timestamp — otherwise any single family or admin
+    // opening the history modal would clear everyone else's unseen badge
+    // too. Each (reservation, user) pair now tracks its own view.
+    name: "0022_reservation_history_views",
+    sql: `
+      CREATE TABLE reservation_history_views (
+        reservation_id INTEGER NOT NULL REFERENCES reservations(id) ON DELETE CASCADE,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        viewed_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        PRIMARY KEY (reservation_id, user_id)
+      );
+
+      ALTER TABLE reservations DROP COLUMN history_viewed_at;
+    `
+  },
+  {
+    // Per-reservation choice: 'online' means the family wants the automated
+    // online-reservation notice (sent 1 week before check-in) and only has
+    // to visit reception at checkout; 'manual' opts out — they'll check
+    // in/out at reception themselves. Defaults to 'online' so every existing
+    // reservation keeps getting the notice exactly as it already did, since
+    // that was every reservation's behavior before this choice existed.
+    name: "0023_reservation_checkin_mode",
+    sql: `
+      ALTER TABLE reservations ADD COLUMN checkin_mode TEXT NOT NULL DEFAULT 'online';
+    `
+  },
+  {
+    // Extra admin-configured BCC addresses for a template's fixed recipient
+    // (e.g. the online-reservation email to reception) — comma-separated,
+    // in addition to whatever the send site already BCCs (e.g. the family).
+    name: "0024_email_template_bcc",
+    sql: `
+      ALTER TABLE email_templates ADD COLUMN bcc TEXT NOT NULL DEFAULT '';
+    `
   }
 ];
 

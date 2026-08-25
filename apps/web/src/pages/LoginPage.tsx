@@ -3,6 +3,7 @@ import { useState } from 'react';
 
 import { SimuniLogo } from '../components/SimuniLogo';
 import { Button } from '../components/ui/Button';
+import { Checkbox } from '../components/ui/Checkbox';
 import { Input } from '../components/ui/Input';
 import { useAuth } from '../state/AuthContext';
 
@@ -63,15 +64,12 @@ export function LoginPage() {
             />
           </label>
 
-          <label className="flex cursor-pointer items-center gap-2.5">
-            <input
-              type="checkbox"
-              checked={rememberMe}
-              onChange={(e) => setRememberMe(e.target.checked)}
-              className="h-4 w-4 rounded border-brand/30 text-brand focus:ring-brand"
-            />
-            <span className="text-sm text-brand-dark/80">Zapomni si me</span>
-          </label>
+          <Checkbox
+            checked={rememberMe}
+            onChange={(e) => setRememberMe(e.target.checked)}
+            label="Zapomni si me"
+            labelClassName="text-brand-dark/80"
+          />
 
           {error && <p className="text-sm font-medium text-red-600">{error}</p>}
 

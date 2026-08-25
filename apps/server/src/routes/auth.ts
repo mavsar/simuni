@@ -16,6 +16,8 @@ type UserRow = {
   password_hash: string;
   family_name: string;
   role: Role;
+  email: string;
+  payment_excluded: number;
 };
 
 const selectByUsername = sqlite.prepare("SELECT * FROM users WHERE username = ?");
@@ -50,6 +52,8 @@ authRouter.post("/login", (req, res) => {
       username: user.username,
       familyName: user.family_name,
       role: user.role,
+      email: user.email,
+      paymentExcluded: user.payment_excluded === 1,
       persons: personsForFamily(user.id),
       cars: carsForFamily(user.id)
     }

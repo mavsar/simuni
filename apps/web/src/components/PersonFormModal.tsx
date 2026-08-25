@@ -4,6 +4,7 @@ import { computeAge } from '../lib/dates';
 import { ID_TYPE_OPTIONS } from '../lib/idTypes';
 import type { IdType, PersonInput } from '../lib/types';
 import { Button } from './ui/Button';
+import { Checkbox } from './ui/Checkbox';
 import { Combobox } from './ui/Combobox';
 import { Input } from './ui/Input';
 import { Modal } from './ui/Modal';
@@ -107,15 +108,11 @@ export function PersonFormModal({
           />
         </label>
 
-        <label className="flex items-center gap-2 text-sm text-brand-dark">
-          <input
-            type="checkbox"
-            checked={form.naPausalu}
-            onChange={(event) => update('naPausalu', event.target.checked)}
-            className="h-4 w-4 rounded border-brand/30 text-brand focus:ring-brand"
-          />
-          Na pavšalu
-        </label>
+        <Checkbox
+          checked={form.naPausalu}
+          onChange={(event) => update('naPausalu', event.target.checked)}
+          label="Na pavšalu"
+        />
 
         {error && <p className="text-sm font-medium text-red-600">{error}</p>}
 

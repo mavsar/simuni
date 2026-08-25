@@ -38,6 +38,39 @@ export type Settings = {
   seasons: Season[];
 };
 
+export type EmailTemplatePlaceholder = {
+  key: string;
+  description: string;
+};
+
+/** An automated email's editable content, e.g. the "prices confirmed" email. */
+export type EmailTemplate = {
+  type: string;
+  label: string;
+  description: string;
+  placeholders: EmailTemplatePlaceholder[];
+  /** Sample values for every placeholder, used to render an admin-facing preview. */
+  sampleValues: Record<string, string>;
+  subject: string;
+  body: string;
+  /** Fixed address this template always sends to (e.g. camp reception); '' if unused. */
+  recipient: string;
+  /** Extra admin-configured BCC addresses, comma-separated; '' if none. */
+  bcc: string;
+  /** Label for the recipient field, or null if this template has no fixed recipient. */
+  recipientLabel: string | null;
+  /** Whether an admin has overridden the built-in default. */
+  isCustomized: boolean;
+  updatedAt: string | null;
+};
+
+/**
+ * 'online': the family wants the automated pre-arrival notice (sent 1 week
+ * before check-in) and only visits reception at checkout. 'manual': they'll
+ * check in/out at reception themselves — no automated notice is sent.
+ */
+export type CheckinMode = 'online' | 'manual';
+
 export type Reservation = {
   id: number;
   /** Owning family of the reservation. */
@@ -54,6 +87,13 @@ export type Reservation = {
   cars: Car[];
   /** Admin-set: whether the bungalov payment has been settled. */
   bungalovPaid: boolean;
+  checkinMode: CheckinMode;
+  /** Whether the automated online-reservation notice has already been sent. */
+  onlineCheckinEmailSent: boolean;
+  /** Total audit-trail entries for this reservation. */
+  historyCount: number;
+  /** Entries created since the current viewer last opened the history modal — per-account, not shared. */
+  unseenHistoryCount: number;
 };
 
 /** Payload for `PATCH /reservations/:id/payment`. Admins only. */
@@ -83,6 +123,14 @@ export type ReservationPaymentChanges = {
   bungalovPaid: { from: boolean; to: boolean };
 };
 
+export type ReservationEmailSentChanges = {
+  /** The address the notice was sent to (the camp reception), not the family's own. */
+  recipient: string;
+  /** The exact rendered content that was sent — absent on entries recorded before this was tracked. */
+  subject?: string;
+  body?: string;
+};
+
 /** One admin-visible audit-trail entry for a reservation. */
 export type ReservationHistoryEntry =
   | {
@@ -108,6 +156,14 @@ export type ReservationHistoryEntry =
       createdAt: string;
       actorName: string;
       actorRole: Role;
+    }
+  | {
+      id: number;
+      action: 'email_sent';
+      changes: ReservationEmailSentChanges;
+      createdAt: string;
+      actorName: string;
+      actorRole: Role;
     };
 
 export type ReservationRangeInput = {
@@ -119,6 +175,7 @@ export type ReservationRangeInput = {
   personIds: number[];
   /** Ids of the cars coming on this reservation. */
   carIds: number[];
+  checkinMode: CheckinMode;
 };
 
 export type Role = 'admin' | 'user';
@@ -141,6 +198,10 @@ export type Person = {
 };
 
 export type PersonInput = {
+  /** Present when editing an existing person, so the server updates them in
+   * place instead of recreating them under a new id — which would silently
+   * drop them from every reservation they're on. Absent for a new person. */
+  id?: number;
   name: string;
   birthday: string;
   naPausalu: boolean;
@@ -157,6 +218,8 @@ export type Car = {
 };
 
 export type CarInput = {
+  /** Same role as PersonInput.id — see its comment. */
+  id?: number;
   name: string;
   registrationPlate: string;
 };
@@ -167,6 +230,9 @@ export type User = {
   username: string;
   familyName: string;
   role: Role;
+  email: string;
+  /** Admin-only, hidden flag: excluded families never see or pay the bungalov share. */
+  paymentExcluded: boolean;
   persons: Person[];
   cars: Car[];
 };
@@ -179,6 +245,8 @@ export type CreateFamilyInput = {
   password: string;
   familyName: string;
   role: Role;
+  email: string;
+  paymentExcluded: boolean;
   persons: PersonInput[];
   cars: CarInput[];
 };
@@ -189,6 +257,8 @@ export type UpdateFamilyInput = {
   password?: string;
   familyName: string;
   role: Role;
+  email: string;
+  paymentExcluded: boolean;
   persons: PersonInput[];
   cars: CarInput[];
 };

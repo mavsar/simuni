@@ -145,3 +145,5 @@ export function Tab({ value, icon: Icon, className, disabled, children }: TabPro
     </button>
   );
 }
+
+export { TAB_ICON_SIZE, tabVariants };

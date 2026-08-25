@@ -8,6 +8,7 @@ import { DateRangePicker, type DateRange } from '../components/ui/DateRangePicke
 import { Input } from '../components/ui/Input';
 import { Label } from '../components/ui/Label';
 import { Modal } from '../components/ui/Modal';
+import type { EmailReport } from '../lib/api';
 import { computePricing, formatEur, seasonLabel, type YearSettings } from '../lib/pricing';
 import type { Season, Settings } from '../lib/types';
 
@@ -19,7 +20,7 @@ export type SettingsPageProps = {
   /** Pricing settings for every configurable year, ascending. */
   years: YearSettings[];
   onSave: (year: number, next: Settings) => Promise<void>;
-  onConfirm: (year: number) => Promise<void>;
+  onConfirm: (year: number) => Promise<EmailReport>;
   onUnlock: (year: number) => Promise<void>;
   /** Admins edit the pricing; regular users see a read-only "Cenik" view. */
   isAdmin?: boolean;
@@ -227,6 +228,7 @@ export function SettingsPage({ years, onSave, onConfirm, onUnlock, isAdmin = fal
 
   function requestYear(next: number) {
     if (next === year) return;
+    setEmailReport(null);
     if (dirty) {
       setPendingYear(next);
     } else {
@@ -236,13 +238,19 @@ export function SettingsPage({ years, onSave, onConfirm, onUnlock, isAdmin = fal
 
   const [priceAction, setPriceAction] = useState<'confirm' | 'unlock' | null>(null);
   const [priceActionBusy, setPriceActionBusy] = useState(false);
+  const [emailReport, setEmailReport] = useState<EmailReport | null>(null);
 
   async function runPriceAction() {
     if (!priceAction) return;
     setPriceActionBusy(true);
     try {
-      if (priceAction === 'confirm') await onConfirm(year);
-      else await onUnlock(year);
+      if (priceAction === 'confirm') {
+        const report = await onConfirm(year);
+        setEmailReport(report);
+      } else {
+        await onUnlock(year);
+        setEmailReport(null);
+      }
       setPriceAction(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Napaka pri potrjevanju cen.');
@@ -385,7 +393,7 @@ export function SettingsPage({ years, onSave, onConfirm, onUnlock, isAdmin = fal
     <div className="mx-auto w-full max-w-5xl space-y-4">
       <div>
         <h2 className="mb-1 flex items-center gap-2 text-xl font-semibold text-white drop-shadow-sm">
-          {isAdmin ? 'Nastavitve' : 'Cenik'}
+          {isAdmin ? 'Cene' : 'Cenik'}
           {locked && (
             <Label color="green" size="sm">
               Cene potrjene
@@ -721,6 +729,25 @@ export function SettingsPage({ years, onSave, onConfirm, onUnlock, isAdmin = fal
               <p className="mt-2 text-xs text-brand/60">
                 Najprej shrani spremembe, preden potrdiš cene za to leto.
               </p>
+            )}
+            {emailReport && (
+              <div className="mt-4 space-y-1 text-sm">
+                {emailReport.sent.length > 0 && (
+                  <p className="text-brand-dark">
+                    E-pošta poslana: {emailReport.sent.join(', ')}.
+                  </p>
+                )}
+                {emailReport.skippedNoEmail.length > 0 && (
+                  <AlertBox variant="info">
+                    Brez e-pošte, ni prejelo obvestila: {emailReport.skippedNoEmail.join(', ')}.
+                  </AlertBox>
+                )}
+                {emailReport.failed.length > 0 && (
+                  <AlertBox>
+                    Pošiljanje ni uspelo: {emailReport.failed.join(', ')}.
+                  </AlertBox>
+                )}
+              </div>
             )}
           </Card>
         )}

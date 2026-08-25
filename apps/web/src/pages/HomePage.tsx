@@ -1,17 +1,31 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo } from 'react';
+import { useLocation, useMatch, useNavigate } from 'react-router-dom';
 
-import { AppHeader, type AppHeaderTab } from '../components/AppHeader';
+import { AppHeader, type AppHeaderTab, type SettingsSection } from '../components/AppHeader';
 import { buildReservationBreakdowns, computeBungalovPricingByYear } from '../lib/pricing';
 import { useAuth } from '../state/AuthContext';
 import { useAppData } from '../state/useAppData';
 import { AvailabilityPage } from './AvailabilityPage';
+import { EmailSettingsPage } from './EmailSettingsPage';
 import { FamiliesPage } from './FamiliesPage';
 import { MyProfilePage } from './MyProfilePage';
 import { SettingsPage } from './SettingsPage';
 
 export function HomePage() {
   const { user, logout } = useAuth();
-  const [activeTab, setActiveTab] = useState<AppHeaderTab>('razpolozljivost');
+  const location = useLocation();
+  const navigate = useNavigate();
+  // The first path segment IS the tab: App.tsx only ever routes here for a
+  // valid, role-appropriate tab, so it can be trusted as-is. A tab's own
+  // sub-pages (e.g. /razpolozljivost/nova-rezervacija) live under it and are
+  // read directly by that tab's page component.
+  const activeTab = location.pathname.split('/')[1] as AppHeaderTab;
+  // "Nastavitve" has two subpages (Cene/Emaili), chosen by a header dropdown
+  // rather than in-page tabs — same sub-route precedent as above, just read
+  // here instead of inside the page component since it picks between two
+  // whole page components.
+  const emailsMatch = useMatch('/nastavitve/emaili');
+  const settingsSection: SettingsSection = emailsMatch ? 'emaili' : 'cene';
   const {
     settingsYears,
     settingsForYear,
@@ -25,7 +39,8 @@ export function HomePage() {
     createReservation,
     updateReservation,
     deleteReservation,
-    updateReservationPayment
+    updateReservationPayment,
+    refreshReservations
   } = useAppData();
 
   // Confirming a year freezes each of its reservations' amounts as of right
@@ -46,33 +61,38 @@ export function HomePage() {
           const breakdown = breakdownsById.get(r.id)!;
           return { reservationId: r.id, bungalov: breakdown.bungalov, simuni: breakdown.simuni };
         });
-      await confirmPrices(year, snapshots);
+      return confirmPrices(year, snapshots);
     },
     [reservations, breakdownsById, confirmPrices]
   );
 
   const isAdmin = user?.role === 'admin';
-  // Guard against landing on a tab the current role can't access:
-  // non-admins have no Družine tab, admins have no Moj profil tab.
-  const resolvedTab: AppHeaderTab =
-    (activeTab === 'druzine' && !isAdmin) || (activeTab === 'profil' && isAdmin)
-      ? 'razpolozljivost'
-      : activeTab;
+  const hideBungalov = !isAdmin && !!user?.paymentExcluded;
+
+  function handleTabChange(tab: AppHeaderTab) {
+    navigate(`/${tab}`);
+  }
+
+  function handleSettingsSectionChange(section: SettingsSection) {
+    navigate(`/nastavitve/${section}`);
+  }
 
   return (
     <div className="flex h-full w-full flex-col">
       <AppHeader
-        activeTab={resolvedTab}
-        onTabChange={setActiveTab}
+        activeTab={activeTab}
+        onTabChange={handleTabChange}
         onLogout={logout}
         isAdmin={isAdmin}
         userName={user?.familyName}
+        settingsSection={settingsSection}
+        onSettingsSectionChange={isAdmin ? handleSettingsSectionChange : undefined}
       />
 
       <main className="flex-1 scrollbar-gutter-stable overflow-y-auto px-4 py-6 sm:px-6">
-        {resolvedTab === 'druzine' && isAdmin && user ? (
+        {activeTab === 'druzine' && isAdmin && user ? (
           <FamiliesPage currentUserId={user.id} />
-        ) : resolvedTab === 'profil' && user ? (
+        ) : activeTab === 'profil' && user ? (
           <MyProfilePage />
         ) : loading ? (
           <p className="text-center text-sm text-white/80 drop-shadow-sm">Nalagam…</p>
@@ -83,18 +103,22 @@ export function HomePage() {
                 {error}
               </div>
             )}
-            {resolvedTab === 'razpolozljivost' && user ? (
+            {activeTab === 'razpolozljivost' && user ? (
               <AvailabilityPage
                 settingsForYear={settingsForYear}
                 reservations={reservations}
                 occupiedDays={occupiedDays}
                 currentUserId={user.id}
                 isAdmin={isAdmin}
+                hideBungalov={hideBungalov}
                 onCreateReservation={createReservation}
                 onUpdateReservation={updateReservation}
                 onDeleteReservation={deleteReservation}
                 onUpdateReservationPayment={updateReservationPayment}
+                onRefreshReservations={refreshReservations}
               />
+            ) : settingsSection === 'emaili' && isAdmin ? (
+              <EmailSettingsPage reservations={reservations} breakdownsById={breakdownsById} />
             ) : (
               <SettingsPage
                 years={settingsYears}

@@ -23,10 +23,12 @@ type FamilyRow = {
   username: string;
   family_name: string;
   role: Role;
+  email: string;
+  payment_excluded: number;
 };
 
 const selectById = sqlite.prepare(
-  "SELECT id, username, family_name, role FROM users WHERE id = ?"
+  "SELECT id, username, family_name, role, email, payment_excluded FROM users WHERE id = ?"
 );
 
 function toDto(id: number) {
@@ -36,6 +38,8 @@ function toDto(id: number) {
     username: row.username,
     familyName: row.family_name,
     role: row.role,
+    email: row.email,
+    paymentExcluded: row.payment_excluded === 1,
     persons: personsForFamily(row.id),
     cars: carsForFamily(row.id)
   };

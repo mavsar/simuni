@@ -3,6 +3,7 @@ import {
   Car as CarIcon,
   ChevronDown,
   ChevronRight,
+  History,
   Home,
   Pencil,
   Plus,
@@ -10,14 +11,18 @@ import {
   User as UserIcon,
 } from 'lucide-react';
 import { Fragment, useEffect, useMemo, useState } from 'react';
+import { useMatch, useNavigate, useSearchParams } from 'react-router-dom';
 
 import { Calendar } from '../components/Calendar';
 import { Button } from '../components/ui/Button';
 import { AlertBox, Card, CardRow, CardSection } from '../components/ui/Card';
+import { Checkbox } from '../components/ui/Checkbox';
 import { Combobox, type ComboboxOption } from '../components/ui/Combobox';
+import { ConfirmModal } from '../components/ui/ConfirmModal';
 import { DateRangePicker, type DateRange } from '../components/ui/DateRangePicker';
 import { Label } from '../components/ui/Label';
 import { Modal } from '../components/ui/Modal';
+import { Radio } from '../components/ui/Radio';
 import { Tooltip } from '../components/ui/Tooltip';
 import { api } from '../lib/api';
 import {
@@ -50,6 +55,7 @@ import {
 } from '../lib/pricing';
 import type {
   Car,
+  CheckinMode,
   Family,
   Person,
   Reservation,
@@ -57,7 +63,15 @@ import type {
   ReservationRangeInput,
   Season,
 } from '../lib/types';
+import { slugify } from '../lib/utils';
 import { useAuth } from '../state/AuthContext';
+
+/** Family name + date range — a friendly, human-readable stand-in for a reservation id. */
+function reservationSlug(
+  reservation: Pick<Reservation, 'ownerName' | 'startDay' | 'endDay'>,
+): string {
+  return `${slugify(reservation.ownerName)}-${reservation.startDay}-${reservation.endDay}`;
+}
 
 const BAND_LABEL: Record<AgeBand, string> = {
   child0_2: 'Otrok 0–2',
@@ -117,6 +131,21 @@ function shortDay(dayKey: string): string {
   return `${day}. ${month}.`;
 }
 
+// The online-reservation notice's fixed daily send time — keep in sync with
+// apps/server/src/index.ts's ONLINE_RESERVATION_CHECK_HOUR/MINUTE, since this
+// is exactly the time the "Online prijava" tooltip promises families.
+const ONLINE_CHECKIN_CHECK_HOUR = 9;
+const ONLINE_CHECKIN_CHECK_MINUTE = 0;
+
+/** When the automated notice for this reservation is due to go out, e.g. `18. 7. 2026 ob 09:00`. */
+function onlineCheckinSendLabel(startDay: string): string {
+  const sendDate = parseDayKey(startDay);
+  sendDate.setDate(sendDate.getDate() - 7);
+  const hh = String(ONLINE_CHECKIN_CHECK_HOUR).padStart(2, '0');
+  const mm = String(ONLINE_CHECKIN_CHECK_MINUTE).padStart(2, '0');
+  return `${sendDate.getDate()}. ${sendDate.getMonth() + 1}. ${sendDate.getFullYear()} ob ${hh}:${mm}`;
+}
+
 /** Human-readable line(s) describing what one history entry changed. */
 function describeHistoryChanges(entry: ReservationHistoryEntry): string[] {
   switch (entry.action) {
@@ -158,6 +187,9 @@ function describeHistoryChanges(entry: ReservationHistoryEntry): string[] {
       const { from, to } = entry.changes.bungalovPaid;
       return [`Bungalov: ${from ? 'plačan' : 'ni plačan'} → ${to ? 'plačan' : 'ni plačan'}.`];
     }
+    case 'email_sent': {
+      return [`Poslana e-pošta z online rezervacijo na ${entry.changes.recipient}.`];
+    }
     default:
       return [];
   }
@@ -170,10 +202,14 @@ export type AvailabilityPageProps = {
   currentUserId: number;
   /** Admins see and can edit every reservation, regardless of owner. */
   isAdmin?: boolean;
+  /** Payment-excluded families never see a bungalov amount, anywhere. */
+  hideBungalov?: boolean;
   onCreateReservation: (input: ReservationRangeInput) => Promise<void>;
   onUpdateReservation: (id: number, input: ReservationRangeInput) => Promise<void>;
   onDeleteReservation: (id: number) => Promise<void>;
   onUpdateReservationPayment: (id: number, bungalovPaid: boolean) => Promise<void>;
+  /** Refetches reservations — used to clear a reservation's unseen-history badge after viewing it. */
+  onRefreshReservations: () => Promise<void>;
 };
 
 /** Counts attendees split into adults and children by age. */
@@ -225,6 +261,33 @@ function AttendeeCounts({ persons }: { persons: Person[] }) {
 }
 
 /**
+ * Shown next to the date range for a reservation that opted into the
+ * automated online-reservation notice. Turns green once that notice has
+ * actually gone out; until then, hovering explains exactly when it will.
+ */
+function OnlineCheckinLabel({ reservation }: { reservation: Reservation }) {
+  if (reservation.checkinMode !== 'online') return null;
+  if (reservation.onlineCheckinEmailSent) {
+    return (
+      <Label color="green" size="sm">
+        Online prijava potrjena
+      </Label>
+    );
+  }
+  return (
+    <Tooltip
+      content={`E-pošta za online prijavo bo poslana recepciji Šimuni ${onlineCheckinSendLabel(reservation.startDay)}.`}
+    >
+      <span>
+        <Label color="sand" size="sm">
+          Online prijava
+        </Label>
+      </span>
+    </Tooltip>
+  );
+}
+
+/**
  * The reservation table's "Plačilo" column. While a year's prices are still
  * open the bungalov amount can still move, so payment status isn't shown yet
  * — only once prices are locked does whether it was actually paid become a
@@ -253,8 +316,51 @@ function PaymentColumnLabel({
   );
 }
 
+/**
+ * Opens the reservation's history modal — only rendered when there's history
+ * to show. The red counter is how many entries haven't been viewed yet
+ * (server-tracked; clears once the history modal is actually opened).
+ */
+function HistoryButton({
+  reservation,
+  onClick,
+}: {
+  reservation: Reservation;
+  onClick: () => void;
+}) {
+  if (reservation.historyCount === 0) return null;
+  return (
+    <div className="relative shrink-0">
+      <Button
+        variant="transparent"
+        color="brand"
+        size="iconSm"
+        icon={History}
+        aria-label="Zgodovina rezervacije"
+        title="Zgodovina rezervacije"
+        onClick={onClick}
+        className="rounded-full text-brand"
+      />
+      {reservation.unseenHistoryCount > 0 && (
+        <span
+          aria-hidden
+          className="pointer-events-none absolute -right-0.5 -top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-bold leading-none text-white"
+        >
+          {reservation.unseenHistoryCount}
+        </span>
+      )}
+    </div>
+  );
+}
+
 /** Expanded detail panel explaining how a reservation's prices are derived. */
-function ReservationBreakdown({ breakdown }: { breakdown: ReservationBreakdownData }) {
+function ReservationBreakdown({
+  breakdown,
+  hideBungalov = false,
+}: {
+  breakdown: ReservationBreakdownData;
+  hideBungalov?: boolean;
+}) {
   const {
     attendees,
     days,
@@ -306,8 +412,12 @@ function ReservationBreakdown({ breakdown }: { breakdown: ReservationBreakdownDa
               <th className="pb-1 pr-3 text-right font-medium">Osebe</th>
               <th className="pb-1 pr-3 text-right font-medium">Taksa</th>
               <th className="pb-1 pr-3 text-right font-medium">Popust</th>
-              <th className="pb-1 pr-3 text-right font-medium">Družin</th>
-              <th className="pb-1 text-right font-medium">Bungalov</th>
+              {!hideBungalov && (
+                <>
+                  <th className="pb-1 pr-3 text-right font-medium">Družin</th>
+                  <th className="pb-1 text-right font-medium">Bungalov</th>
+                </>
+              )}
             </tr>
           </thead>
           <tbody className="text-brand-dark/90">
@@ -329,39 +439,47 @@ function ReservationBreakdown({ breakdown }: { breakdown: ReservationBreakdownDa
                 <td className="whitespace-nowrap py-1 pr-3 text-right text-brand/70">
                   {d.discountPercent.toFixed(0)} %
                 </td>
-                <td className="whitespace-nowrap py-1 pr-3 text-right text-brand/70">{d.fams}×</td>
-                <td className="whitespace-nowrap py-1 text-right font-medium">
-                  {formatEur(d.bungalovCost)}
-                </td>
+                {!hideBungalov && (
+                  <>
+                    <td className="whitespace-nowrap py-1 pr-3 text-right text-brand/70">
+                      {d.fams}×
+                    </td>
+                    <td className="whitespace-nowrap py-1 text-right font-medium">
+                      {formatEur(d.bungalovCost)}
+                    </td>
+                  </>
+                )}
               </tr>
             ))}
           </tbody>
         </table>
       </div>
 
-      <dl className="grid gap-2 sm:grid-cols-3">
+      <dl className={`grid gap-2 ${hideBungalov ? 'sm:grid-cols-2' : 'sm:grid-cols-3'}`}>
         <div className="rounded-xl bg-white p-2.5 ring-1 ring-brand/10">
           <dt className="text-[10px] uppercase tracking-wide text-brand/60">Za plačati Šimuni</dt>
           <dd className="font-semibold">{formatEur(simuni)}</dd>
           <p className="mt-0.5 text-[11px] text-brand/60">
             Osebe {formatEur(simuniPersons)} + taksa {formatEur(simuniTax)}
-            {(days[0]?.taxRate ?? 0) > 0 &&
-              ` (${formatEur(days[0]?.taxRate ?? 0)}/osebo/noč)`}{' '}
-            + nastanitev{' '}
-            {formatEur(accommodationFee)}
+            {(days[0]?.taxRate ?? 0) > 0 && ` (${formatEur(days[0]?.taxRate ?? 0)}/osebo/noč)`} +
+            nastanitev {formatEur(accommodationFee)}
             {accommodationFeeRate > 0 && ` (${formatEur(accommodationFeeRate)}/osebo)`}
           </p>
         </div>
-        <div className="rounded-xl bg-white p-2.5 ring-1 ring-brand/10">
-          <dt className="text-[10px] uppercase tracking-wide text-brand/60">Za plačati bungalov</dt>
-          <dd className="font-semibold">{formatEur(bungalov)}</dd>
-          <p className="mt-0.5 text-[11px] text-brand/60">
-            Sezonsko utežena najemnina, deljena med družine.
-          </p>
-        </div>
+        {!hideBungalov && (
+          <div className="rounded-xl bg-white p-2.5 ring-1 ring-brand/10">
+            <dt className="text-[10px] uppercase tracking-wide text-brand/60">
+              Za plačati bungalov
+            </dt>
+            <dd className="font-semibold">{formatEur(bungalov)}</dd>
+            <p className="mt-0.5 text-[11px] text-brand/60">
+              Sezonsko utežena najemnina, deljena med družine.
+            </p>
+          </div>
+        )}
         <div className="rounded-xl bg-white p-2.5 ring-1 ring-brand/10">
           <dt className="text-[10px] uppercase tracking-wide text-brand/60">Skupaj</dt>
-          <dd className="font-semibold text-brand">{formatEur(total)}</dd>
+          <dd className="font-semibold text-brand">{formatEur(hideBungalov ? simuni : total)}</dd>
         </div>
       </dl>
 
@@ -400,22 +518,13 @@ function BungalovPaidToggle({
   }
 
   return (
-    <label
-      className={`flex w-fit cursor-pointer items-center gap-2 rounded-xl border px-3 py-2 text-xs transition-colors ${
-        reservation.bungalovPaid
-          ? 'border-brand bg-brand/5 text-brand-dark'
-          : 'border-brand/15 bg-white text-brand-dark/80 hover:border-brand/30'
-      } ${saving ? 'opacity-60' : ''}`}
-    >
-      <input
-        type="checkbox"
-        checked={reservation.bungalovPaid}
-        onChange={toggle}
-        disabled={saving}
-        className="h-4 w-4 rounded border-brand/30 text-brand focus:ring-brand"
-      />
-      <span>Bungalov plačan</span>
-    </label>
+    <Checkbox
+      checked={reservation.bungalovPaid}
+      onChange={toggle}
+      disabled={saving}
+      label="Bungalov plačan"
+      labelClassName="w-fit text-xs"
+    />
   );
 }
 
@@ -425,10 +534,12 @@ export function AvailabilityPage({
   occupiedDays,
   currentUserId,
   isAdmin = false,
+  hideBungalov = false,
   onCreateReservation,
   onUpdateReservation,
   onDeleteReservation,
   onUpdateReservationPayment,
+  onRefreshReservations,
 }: AvailabilityPageProps) {
   const { user } = useAuth();
   const bungalovPricing = useMemo(
@@ -436,25 +547,71 @@ export function AvailabilityPage({
     [settingsForYear, occupiedDays],
   );
 
+  const navigate = useNavigate();
+  // The modal's own state lives in the URL, so it's bookmarkable and the
+  // browser back button closes it: /nova-rezervacija for a new booking,
+  // /rezervacija/:slug (family name + date range, not a raw id) to edit one.
+  const createMatch = useMatch('/razpolozljivost/nova-rezervacija');
+  const editMatch = useMatch('/razpolozljivost/rezervacija/:slug');
+  const editSlug = editMatch?.params.slug ?? null;
+  const modalOpen = createMatch !== null || editSlug !== null;
+  // Always the live server copy — there's no separate snapshot to go stale,
+  // e.g. right after toggling "Bungalov plačan".
+  const editing =
+    editSlug !== null ? (reservations.find((r) => reservationSlug(r) === editSlug) ?? null) : null;
+
+  // A URL naming a reservation that doesn't exist (deleted, wrong slug) or
+  // that this non-admin family doesn't own bounces back to the plain tab.
+  useEffect(() => {
+    if (editSlug === null) return;
+    if (!editing || (!isAdmin && editing.userId !== currentUserId)) {
+      navigate('/razpolozljivost', { replace: true });
+    }
+  }, [editSlug, editing, isAdmin, currentUserId, navigate]);
+
+  // The year/family filter chips live in the query string too, so a filtered
+  // view is a link you can share or bookmark: ?leto=vse|<year>&druzina=<slug>.
+  // No `leto` defaults to the current year; no `druzina` means every family.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const yearParam = searchParams.get('leto');
+  const filterYear =
+    yearParam === 'vse' ? null : yearParam ? Number(yearParam) : new Date().getFullYear();
+  const familyParam = searchParams.get('druzina');
+
+  function selectYearFilter(year: number | null) {
+    setSearchParams((prev: URLSearchParams) => {
+      const next = new URLSearchParams(prev);
+      next.set('leto', year === null ? 'vse' : String(year));
+      return next;
+    });
+  }
+
+  function selectFamilyFilter(name: string | null) {
+    setSearchParams((prev: URLSearchParams) => {
+      const next = new URLSearchParams(prev);
+      if (name === null) next.delete('druzina');
+      else next.set('druzina', slugify(name));
+      return next;
+    });
+  }
+
   const [expandedId, setExpandedId] = useState<number | null>(null);
-  // null = all families; otherwise restrict the table to one family's bookings.
-  const [filterFamilyId, setFilterFamilyId] = useState<number | null>(null);
-  // null = all years; otherwise restrict the table to one year's bookings.
-  // Defaults to the current year.
-  const [filterYear, setFilterYear] = useState<number | null>(() => new Date().getFullYear());
-  const [modalOpen, setModalOpen] = useState(false);
-  const [editing, setEditing] = useState<Reservation | null>(null);
   const [range, setRange] = useState<DateRange | undefined>(undefined);
+  const [checkinMode, setCheckinMode] = useState<CheckinMode>('manual');
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
-  // Admin-only audit trail for the reservation currently open in the modal.
+  // Admin-only audit trail, shown in its own modal (separate from the edit
+  // modal), opened via the History button on a reservation row.
+  const [historyReservationId, setHistoryReservationId] = useState<number | null>(null);
+  // Which "email_sent" entry currently has its "Show email" preview open.
+  const [expandedHistoryEntryId, setExpandedHistoryEntryId] = useState<number | null>(null);
   const [history, setHistory] = useState<ReservationHistoryEntry[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyError, setHistoryError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!modalOpen || !editing || !isAdmin) {
+    if (historyReservationId === null) {
       setHistory([]);
       return;
     }
@@ -462,15 +619,18 @@ export function AvailabilityPage({
     setHistoryLoading(true);
     setHistoryError(null);
     api
-      .getReservationHistory(editing.id)
+      .getReservationHistory(historyReservationId)
       .then((res) => {
-        if (!cancelled) setHistory(res.history);
+        if (!cancelled) {
+          setHistory(res.history);
+          // The server marks it viewed as a side effect of this request —
+          // refresh so this row's unseen badge clears.
+          void onRefreshReservations();
+        }
       })
       .catch((err) => {
         if (!cancelled) {
-          setHistoryError(
-            err instanceof Error ? err.message : 'Napaka pri nalaganju zgodovine.',
-          );
+          setHistoryError(err instanceof Error ? err.message : 'Napaka pri nalaganju zgodovine.');
         }
       })
       .finally(() => {
@@ -479,14 +639,22 @@ export function AvailabilityPage({
     return () => {
       cancelled = true;
     };
-  }, [modalOpen, editing?.id, isAdmin]);
+  }, [historyReservationId, onRefreshReservations]);
 
-  // The reservation being edited, kept in sync with the latest server state
-  // (e.g. right after toggling "Bungalov plačan") rather than the snapshot
-  // captured when the modal opened.
-  const liveEditing = editing
-    ? (reservations.find((r) => r.id === editing.id) ?? editing)
-    : null;
+  const historyReservation =
+    historyReservationId !== null
+      ? (reservations.find((r) => r.id === historyReservationId) ?? null)
+      : null;
+
+  function openHistory(reservation: Reservation) {
+    setHistoryReservationId(reservation.id);
+    setExpandedHistoryEntryId(null);
+  }
+
+  function closeHistoryModal() {
+    setHistoryReservationId(null);
+    setExpandedHistoryEntryId(null);
+  }
 
   // Admins can book on behalf of any family, so we need the full family list.
   const [families, setFamilies] = useState<Family[]>([]);
@@ -540,9 +708,7 @@ export function AvailabilityPage({
     () =>
       reservations
         .filter((reservation) => isAdmin || reservation.userId === currentUserId)
-        .sort(
-          (a, b) => a.startDay.localeCompare(b.startDay) || a.endDay.localeCompare(b.endDay),
-        ),
+        .sort((a, b) => a.startDay.localeCompare(b.startDay) || a.endDay.localeCompare(b.endDay)),
     [reservations, currentUserId, isAdmin],
   );
 
@@ -570,8 +736,9 @@ export function AvailabilityPage({
   // Keep the active year valid if it no longer has bookings (and isn't the current year).
   useEffect(() => {
     if (filterYear !== null && !yearFilters.includes(filterYear)) {
-      setFilterYear(new Date().getFullYear());
+      selectYearFilter(new Date().getFullYear());
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [yearFilters, filterYear]);
 
   const yearFilteredReservations = useMemo(
@@ -609,12 +776,19 @@ export function AvailabilityPage({
     return [...byId.entries()].map(([id, name]) => ({ id, name }));
   }, [yearFilteredReservations]);
 
+  // The `druzina` param names a family by its slugified name, not its id —
+  // resolved against the current chip list, which is itself year-filtered.
+  const filterFamilyId = familyParam
+    ? (familyFilters.find((f) => slugify(f.name) === familyParam)?.id ?? null)
+    : null;
+
   // Keep the active filter valid if the selected family no longer has bookings.
   useEffect(() => {
-    if (filterFamilyId !== null && !familyFilters.some((f) => f.id === filterFamilyId)) {
-      setFilterFamilyId(null);
+    if (familyParam !== null && !familyFilters.some((f) => slugify(f.name) === familyParam)) {
+      selectFamilyFilter(null);
     }
-  }, [familyFilters, filterFamilyId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [familyFilters, familyParam]);
 
   // The breakdown per reservation still accounts for every family sharing a day;
   // the filter only narrows which rows (and totals) are shown.
@@ -858,27 +1032,38 @@ export function AvailabilityPage({
     availablePersons,
   ]);
 
-  function openCreate() {
-    setEditing(null);
-    setRange(undefined);
-    setSelectedUserId(currentUserId);
-    setSelectedPersonIds(personsForFamily(currentUserId).map((person) => person.id));
-    setSelectedCarIds([]);
+  // Re-seed the form fields whenever the URL switches to a new create/edit
+  // target — not on every unrelated data refresh, which would otherwise
+  // clobber in-progress edits (e.g. toggling "Bungalov plačan" mid-edit).
+  useEffect(() => {
+    if (createMatch) {
+      setRange(undefined);
+      setSelectedUserId(currentUserId);
+      setSelectedPersonIds(personsForFamily(currentUserId).map((person) => person.id));
+      setSelectedCarIds([]);
+      setCheckinMode('manual');
+      setFormError(null);
+      return;
+    }
+    if (!editing) return;
+    setRange({
+      from: parseDayKey(editing.startDay),
+      to: parseDayKey(editing.endDay),
+    });
+    setSelectedUserId(editing.userId);
+    setSelectedPersonIds(editing.persons.map((person) => person.id));
+    setSelectedCarIds(editing.cars.map((car) => car.id));
+    setCheckinMode(editing.checkinMode);
     setFormError(null);
-    setModalOpen(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [createMatch, editSlug]);
+
+  function openCreate() {
+    navigate('/razpolozljivost/nova-rezervacija');
   }
 
   function openEdit(reservation: Reservation) {
-    setEditing(reservation);
-    setRange({
-      from: parseDayKey(reservation.startDay),
-      to: parseDayKey(reservation.endDay),
-    });
-    setSelectedUserId(reservation.userId);
-    setSelectedPersonIds(reservation.persons.map((person) => person.id));
-    setSelectedCarIds(reservation.cars.map((car) => car.id));
-    setFormError(null);
-    setModalOpen(true);
+    navigate(`/razpolozljivost/rezervacija/${reservationSlug(reservation)}`);
   }
 
   function handleFamilyChange(familyId: number) {
@@ -902,7 +1087,7 @@ export function AvailabilityPage({
 
   function closeModal() {
     if (saving) return;
-    setModalOpen(false);
+    navigate('/razpolozljivost');
   }
 
   async function handleSave() {
@@ -913,6 +1098,7 @@ export function AvailabilityPage({
       endDay: toDayKey(end),
       personIds: selectedPersonIds,
       carIds: selectedCarIds,
+      checkinMode,
       ...(isAdmin ? { userId: selectedUserId } : {}),
     };
 
@@ -924,7 +1110,7 @@ export function AvailabilityPage({
       } else {
         await onCreateReservation(input);
       }
-      setModalOpen(false);
+      navigate('/razpolozljivost');
     } catch (err) {
       setFormError(err instanceof Error ? err.message : 'Napaka pri shranjevanju.');
     } finally {
@@ -932,15 +1118,19 @@ export function AvailabilityPage({
     }
   }
 
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+
   async function handleDelete() {
     if (!editing) return;
     setSaving(true);
     setFormError(null);
     try {
       await onDeleteReservation(editing.id);
-      setModalOpen(false);
+      setDeleteConfirmOpen(false);
+      navigate('/razpolozljivost');
     } catch (err) {
       setFormError(err instanceof Error ? err.message : 'Napaka pri brisanju.');
+      setDeleteConfirmOpen(false);
     } finally {
       setSaving(false);
     }
@@ -963,7 +1153,7 @@ export function AvailabilityPage({
             <span className="text-xs font-medium uppercase tracking-wide text-brand/60">Leto</span>
             <button
               type="button"
-              onClick={() => setFilterYear(null)}
+              onClick={() => selectYearFilter(null)}
               className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
                 filterYear === null
                   ? 'bg-brand text-white'
@@ -976,7 +1166,7 @@ export function AvailabilityPage({
               <button
                 key={year}
                 type="button"
-                onClick={() => setFilterYear(year)}
+                onClick={() => selectYearFilter(year)}
                 className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
                   filterYear === year
                     ? 'bg-brand text-white'
@@ -996,7 +1186,7 @@ export function AvailabilityPage({
             </span>
             <button
               type="button"
-              onClick={() => setFilterFamilyId(null)}
+              onClick={() => selectFamilyFilter(null)}
               className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
                 filterFamilyId === null
                   ? 'bg-brand text-white'
@@ -1009,7 +1199,7 @@ export function AvailabilityPage({
               <button
                 key={family.id}
                 type="button"
-                onClick={() => setFilterFamilyId(family.id)}
+                onClick={() => selectFamilyFilter(family.name)}
                 className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
                   filterFamilyId === family.id
                     ? 'bg-brand text-white'
@@ -1038,8 +1228,9 @@ export function AvailabilityPage({
                   <CardRow key={reservation.id}>
                     <div className="flex items-start justify-between gap-2 px-3 py-3">
                       <div>
-                        <p className="font-medium text-brand-dark">
+                        <p className="flex flex-wrap items-center gap-1.5 font-medium text-brand-dark">
                           {formatDayRange(reservation.startDay, reservation.endDay)}
+                          <OnlineCheckinLabel reservation={reservation} />
                         </p>
                         <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-brand/60">
                           {isAdmin && (
@@ -1051,6 +1242,10 @@ export function AvailabilityPage({
                         </p>
                       </div>
                       <div className="flex shrink-0 items-center gap-1">
+                        <HistoryButton
+                          reservation={reservation}
+                          onClick={() => openHistory(reservation)}
+                        />
                         <Button
                           variant="transparent"
                           color="brand"
@@ -1078,41 +1273,49 @@ export function AvailabilityPage({
                         />
                       </div>
                     </div>
-                    <div className="grid grid-cols-4 divide-x divide-brand/10 border-t border-brand/10">
+                    <div
+                      className={`grid divide-x divide-brand/10 border-t border-brand/10 ${
+                        hideBungalov ? 'grid-cols-2' : 'grid-cols-4'
+                      }`}
+                    >
                       <div className="px-3 py-2">
                         <p className="text-[10px] uppercase tracking-wide text-brand/50">Šimuni</p>
                         <p className="text-sm font-medium text-brand-dark">
                           {formatEur(breakdown.simuni)}
                         </p>
                       </div>
-                      <div className="px-3 py-2">
-                        <p className="text-[10px] uppercase tracking-wide text-brand/50">
-                          Bungalov
-                        </p>
-                        <p className="text-sm font-semibold text-brand-dark">
-                          {formatEur(breakdown.bungalov)}
-                        </p>
-                      </div>
+                      {!hideBungalov && (
+                        <div className="px-3 py-2">
+                          <p className="text-[10px] uppercase tracking-wide text-brand/50">
+                            Bungalov
+                          </p>
+                          <p className="text-sm font-semibold text-brand-dark">
+                            {formatEur(breakdown.bungalov)}
+                          </p>
+                        </div>
+                      )}
                       <div className="px-3 py-2">
                         <p className="text-[10px] uppercase tracking-wide text-brand/50">Skupaj</p>
                         <p className="text-sm font-semibold text-brand">
-                          {formatEur(breakdown.total)}
+                          {formatEur(hideBungalov ? breakdown.simuni : breakdown.total)}
                         </p>
                       </div>
-                      <div className="px-3 py-2">
-                        <p className="text-[10px] uppercase tracking-wide text-brand/50">
-                          Plačilo
-                        </p>
-                        <PaymentColumnLabel
-                          priceMayChange={priceMayChange}
-                          bungalovPaid={reservation.bungalovPaid}
-                          year={yearOfDay(reservation.startDay)}
-                        />
-                      </div>
+                      {!hideBungalov && (
+                        <div className="px-3 py-2">
+                          <p className="text-[10px] uppercase tracking-wide text-brand/50">
+                            Plačilo
+                          </p>
+                          <PaymentColumnLabel
+                            priceMayChange={priceMayChange}
+                            bungalovPaid={reservation.bungalovPaid}
+                            year={yearOfDay(reservation.startDay)}
+                          />
+                        </div>
+                      )}
                     </div>
                     {expanded && (
                       <div className="space-y-2 border-t border-brand/10 px-3 pb-3 pt-2">
-                        <ReservationBreakdown breakdown={breakdown} />
+                        <ReservationBreakdown breakdown={breakdown} hideBungalov={hideBungalov} />
                       </div>
                     )}
                   </CardRow>
@@ -1120,28 +1323,38 @@ export function AvailabilityPage({
               })}
 
               {/* Mobile totals row */}
-              <div className="grid grid-cols-3 divide-x divide-brand/15 rounded-xl border border-brand/15 bg-sky/40">
+              <div
+                className={`grid divide-x divide-brand/15 rounded-xl border border-brand/15 bg-sky/40 ${
+                  hideBungalov ? 'grid-cols-2' : 'grid-cols-3'
+                }`}
+              >
                 <div className="px-3 py-2.5">
                   <p className="text-[10px] uppercase tracking-wide text-brand/50">Šimuni</p>
                   <p className="text-sm font-semibold text-brand-dark">
                     {formatEur(totals.simuni)}
                   </p>
                 </div>
-                <div className="px-3 py-2.5">
-                  <p className="text-[10px] uppercase tracking-wide text-brand/50">Bungalov</p>
-                  <p className="text-sm font-bold text-brand">{formatEur(totals.bungalov)}</p>
-                </div>
+                {!hideBungalov && (
+                  <div className="px-3 py-2.5">
+                    <p className="text-[10px] uppercase tracking-wide text-brand/50">Bungalov</p>
+                    <p className="text-sm font-bold text-brand">{formatEur(totals.bungalov)}</p>
+                  </div>
+                )}
                 <div className="px-3 py-2.5">
                   <p className="text-[10px] uppercase tracking-wide text-brand/50">Skupaj</p>
-                  <p className="text-sm font-semibold text-brand-dark">{formatEur(totals.total)}</p>
+                  <p className="text-sm font-semibold text-brand-dark">
+                    {formatEur(hideBungalov ? totals.simuni : totals.total)}
+                  </p>
                 </div>
               </div>
 
-              <p className="text-xs text-brand/60">
-                Med družine se deli samo najemnina za bungalov. „Za plačati Šimuni“ vključuje ceno
-                na osebo za tiste, ki niso na pavšalu, turistično takso in enkratno plačilo
-                nastanitve.
-              </p>
+              {!hideBungalov && (
+                <p className="text-xs text-brand/60">
+                  Med družine se deli samo najemnina za bungalov. „Za plačati Šimuni“ vključuje ceno
+                  na osebo za tiste, ki niso na pavšalu, turistično takso in enkratno plačilo
+                  nastanitve.
+                </p>
+              )}
             </div>
 
             {/* ── Desktop table (xl+, overridden to 1050px) ────────────── */}
@@ -1152,19 +1365,21 @@ export function AvailabilityPage({
                       row content (e.g. the expanded breakdown) or the container's
                       own width (e.g. a scrollbar toggling) can never resize them. */}
                   <col />
-                  <col className="w-37.5" />
-                  <col className="w-37.5" />
-                  <col className="w-37.5" />
-                  <col className="w-37.5" />
-                  <col className="w-22.5" />
+                  <col className="w-26" />
+                  {!hideBungalov && <col className="w-26" />}
+                  <col className="w-26" />
+                  {!hideBungalov && <col className="w-32" />}
+                  <col className="w-32" />
                 </colgroup>
                 <thead>
                   <tr className="border-b border-brand/10 text-left text-xs uppercase tracking-wide text-brand/60">
                     <th className="py-2 pr-3 font-medium">Obdobje</th>
                     <th className="py-2 px-3 text-right font-medium">Za plačati Šimuni</th>
-                    <th className="py-2 px-3 text-right font-medium">Za plačati bungalov</th>
+                    {!hideBungalov && (
+                      <th className="py-2 px-3 text-right font-medium">Za plačati bungalov</th>
+                    )}
                     <th className="py-2 px-3 text-right font-medium">Skupaj</th>
-                    <th className="py-2 px-3 font-medium">Plačilo</th>
+                    {!hideBungalov && <th className="py-2 px-3 font-medium">Plačilo</th>}
                     <th className="py-2 pl-3" />
                   </tr>
                 </thead>
@@ -1175,8 +1390,9 @@ export function AvailabilityPage({
                       <Fragment key={reservation.id}>
                         <tr className="align-middle">
                           <td className="py-2.5 pr-3">
-                            <p className="font-medium text-brand-dark">
+                            <p className="flex flex-wrap items-center gap-1.5 font-medium text-brand-dark">
                               {formatDayRange(reservation.startDay, reservation.endDay)}
+                              <OnlineCheckinLabel reservation={reservation} />
                             </p>
                             <p className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-brand/60">
                               {isAdmin && (
@@ -1190,21 +1406,29 @@ export function AvailabilityPage({
                           <td className="whitespace-nowrap py-2.5 px-3 text-right text-brand-dark">
                             {formatEur(breakdown.simuni)}
                           </td>
+                          {!hideBungalov && (
+                            <td className="whitespace-nowrap py-2.5 px-3 text-right font-semibold text-brand-dark">
+                              {formatEur(breakdown.bungalov)}
+                            </td>
+                          )}
                           <td className="whitespace-nowrap py-2.5 px-3 text-right font-semibold text-brand-dark">
-                            {formatEur(breakdown.bungalov)}
+                            {formatEur(hideBungalov ? breakdown.simuni : breakdown.total)}
                           </td>
-                          <td className="whitespace-nowrap py-2.5 px-3 text-right font-semibold text-brand-dark">
-                            {formatEur(breakdown.total)}
-                          </td>
-                          <td className="py-2.5 px-3 align-middle">
-                            <PaymentColumnLabel
-                              priceMayChange={priceMayChange}
-                              bungalovPaid={reservation.bungalovPaid}
-                              year={yearOfDay(reservation.startDay)}
-                            />
-                          </td>
+                          {!hideBungalov && (
+                            <td className="py-2.5 px-3 align-middle">
+                              <PaymentColumnLabel
+                                priceMayChange={priceMayChange}
+                                bungalovPaid={reservation.bungalovPaid}
+                                year={yearOfDay(reservation.startDay)}
+                              />
+                            </td>
+                          )}
                           <td className="py-2.5 pl-3">
                             <div className="flex items-center justify-end gap-1">
+                              <HistoryButton
+                                reservation={reservation}
+                                onClick={() => openHistory(reservation)}
+                              />
                               <Button
                                 variant="transparent"
                                 color="brand"
@@ -1235,8 +1459,11 @@ export function AvailabilityPage({
                         </tr>
                         {expanded && (
                           <tr>
-                            <td colSpan={6} className="pb-3 pt-1">
-                              <ReservationBreakdown breakdown={breakdown} />
+                            <td colSpan={hideBungalov ? 4 : 6} className="pb-3 pt-1">
+                              <ReservationBreakdown
+                                breakdown={breakdown}
+                                hideBungalov={hideBungalov}
+                              />
                             </td>
                           </tr>
                         )}
@@ -1250,22 +1477,30 @@ export function AvailabilityPage({
                     <td className="whitespace-nowrap py-3 px-3 text-right font-semibold text-brand-dark">
                       {formatEur(totals.simuni)}
                     </td>
-                    <td className="whitespace-nowrap py-3 px-3 text-right text-lg font-bold text-brand">
-                      {formatEur(totals.bungalov)}
+                    {!hideBungalov && (
+                      <td className="whitespace-nowrap py-3 px-3 text-right text-lg font-bold text-brand">
+                        {formatEur(totals.bungalov)}
+                      </td>
+                    )}
+                    <td
+                      className={`whitespace-nowrap py-3 px-3 text-right font-semibold text-brand-dark ${
+                        hideBungalov ? 'text-lg font-bold text-brand' : ''
+                      }`}
+                    >
+                      {formatEur(hideBungalov ? totals.simuni : totals.total)}
                     </td>
-                    <td className="whitespace-nowrap py-3 px-3 text-right font-semibold text-brand-dark">
-                      {formatEur(totals.total)}
-                    </td>
-                    <td className="py-3 px-3" />
+                    {!hideBungalov && <td className="py-3 px-3" />}
                     <td className="py-3 pl-3" />
                   </tr>
                 </tfoot>
               </table>
-              <p className="mt-3 text-xs text-brand/60">
-                Med družine se deli samo najemnina za bungalov. „Za plačati Šimuni“ vključuje ceno
-                na osebo za tiste, ki niso na pavšalu, turistično takso in enkratno plačilo
-                nastanitve.
-              </p>
+              {!hideBungalov && (
+                <p className="mt-3 text-xs text-brand/60">
+                  Med družine se deli samo najemnina za bungalov. „Za plačati Šimuni“ vključuje ceno
+                  na osebo za tiste, ki niso na pavšalu, turistično takso in enkratno plačilo
+                  nastanitve.
+                </p>
+              )}
             </div>
           </>
         )}
@@ -1277,6 +1512,7 @@ export function AvailabilityPage({
         canEditAll={isAdmin}
         priceForDay={bungalovPricing.priceForDay}
         formatPrice={formatEur}
+        hidePrice={hideBungalov}
         onEditReservation={openEdit}
       />
 
@@ -1293,7 +1529,7 @@ export function AvailabilityPage({
                   variant="outline"
                   color="danger"
                   icon={Trash2}
-                  onClick={handleDelete}
+                  onClick={() => setDeleteConfirmOpen(true)}
                   disabled={saving}
                 >
                   Izbriši
@@ -1342,29 +1578,16 @@ export function AvailabilityPage({
                 const child = isChild(person.birthday);
                 const checked = selectedPersonIds.includes(person.id);
                 return (
-                  <label
+                  <Checkbox
                     key={person.id}
-                    className={`flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-2 text-sm transition-colors ${
-                      checked
-                        ? 'border-brand bg-brand/5 text-brand-dark'
-                        : 'border-brand/15 bg-white text-brand-dark/80 hover:border-brand/30'
-                    }`}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={() => togglePerson(person.id)}
-                      disabled={saving}
-                      className="h-4 w-4 rounded border-brand/30 text-brand focus:ring-brand"
-                    />
-                    {child ? (
-                      <Baby size={15} className="text-brand/70" aria-hidden />
-                    ) : (
-                      <UserIcon size={15} className="text-brand/70" aria-hidden />
-                    )}
-                    <span className="flex-1 truncate font-medium">{person.name}</span>
-                    {age !== null && <span className="text-xs text-brand/50">{age} let</span>}
-                  </label>
+                    checked={checked}
+                    onChange={() => togglePerson(person.id)}
+                    disabled={saving}
+                    icon={child ? Baby : UserIcon}
+                    label={person.name}
+                    labelClassName="font-medium"
+                    trailing={age !== null ? `${age} let` : undefined}
+                  />
                 );
               })}
             </div>
@@ -1382,27 +1605,16 @@ export function AvailabilityPage({
               {availableCars.map((car) => {
                 const checked = selectedCarIds.includes(car.id);
                 return (
-                  <label
+                  <Checkbox
                     key={car.id}
-                    className={`flex cursor-pointer items-center gap-2 rounded-xl border px-3 py-2 text-sm transition-colors ${
-                      checked
-                        ? 'border-brand bg-brand/5 text-brand-dark'
-                        : 'border-brand/15 bg-white text-brand-dark/80 hover:border-brand/30'
-                    }`}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={() => toggleCar(car.id)}
-                      disabled={saving}
-                      className="h-4 w-4 rounded border-brand/30 text-brand focus:ring-brand"
-                    />
-                    <CarIcon size={15} className="text-brand/70" aria-hidden />
-                    <span className="flex-1 truncate font-medium">{car.name}</span>
-                    {car.registrationPlate && (
-                      <span className="text-xs text-brand/50">{car.registrationPlate}</span>
-                    )}
-                  </label>
+                    checked={checked}
+                    onChange={() => toggleCar(car.id)}
+                    disabled={saving}
+                    icon={CarIcon}
+                    label={car.name}
+                    labelClassName="font-medium"
+                    trailing={car.registrationPlate || undefined}
+                  />
                 );
               })}
             </div>
@@ -1449,39 +1661,42 @@ export function AvailabilityPage({
             )}
 
             {/* Bungalov section */}
-            <div className="space-y-1.5">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-brand/50">
-                Bungalov
-              </p>
+            {!hideBungalov && (
+              <div className="space-y-1.5">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-brand/50">
+                  Bungalov
+                </p>
 
-              {/* Per-season bungalov breakdown */}
-              {selectionEstimate.seasonGroups.map((group, i) => (
-                <div
-                  key={i}
-                  className="flex items-start justify-between rounded-xl bg-white/60 px-3 py-2 text-xs"
-                >
-                  <div className="leading-relaxed">
-                    <span className="font-medium text-brand-dark">
-                      {group.seasonName ?? '(zunaj sezone)'}
-                    </span>
-                    <span className="ml-2 text-brand/50">
-                      {nightCountLabel(group.days)} x {formatEur(group.bungalovTotal / group.days)}
-                    </span>
-                    {group.discountPercent > 0 && (
-                      <span className="ml-2 text-brand/50">
-                        ({group.discountPercent.toFixed(0)}% popusta)
+                {/* Per-season bungalov breakdown */}
+                {selectionEstimate.seasonGroups.map((group, i) => (
+                  <div
+                    key={i}
+                    className="flex items-start justify-between rounded-xl bg-white/60 px-3 py-2 text-xs"
+                  >
+                    <div className="leading-relaxed">
+                      <span className="font-medium text-brand-dark">
+                        {group.seasonName ?? '(zunaj sezone)'}
                       </span>
-                    )}
-                    {group.avgFams > 1 && (
-                      <span className="ml-2 text-brand/50">÷ {group.avgFams} drž.</span>
-                    )}
+                      <span className="ml-2 text-brand/50">
+                        {nightCountLabel(group.days)} x{' '}
+                        {formatEur(group.bungalovTotal / group.days)}
+                      </span>
+                      {group.discountPercent > 0 && (
+                        <span className="ml-2 text-brand/50">
+                          ({group.discountPercent.toFixed(0)}% popusta)
+                        </span>
+                      )}
+                      {group.avgFams > 1 && (
+                        <span className="ml-2 text-brand/50">÷ {group.avgFams} drž.</span>
+                      )}
+                    </div>
+                    <span className="ml-3 shrink-0 font-semibold text-brand-dark">
+                      {formatEur(group.bungalovTotal)}
+                    </span>
                   </div>
-                  <span className="ml-3 shrink-0 font-semibold text-brand-dark">
-                    {formatEur(group.bungalovTotal)}
-                  </span>
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
 
             {/* Šimuni section */}
             {(selectionEstimate.seasonGroups.some((g) => g.personRows.length > 0) ||
@@ -1574,25 +1789,31 @@ export function AvailabilityPage({
                   {formatEur(selectionEstimate.simuni)}
                 </span>
               </div>
-              <div className="flex justify-between text-xs text-brand/70">
-                <span>Za plačati bungalov</span>
-                <span className="font-medium text-brand-dark">
-                  {formatEur(selectionEstimate.bungalov)}
-                </span>
-              </div>
+              {!hideBungalov && (
+                <div className="flex justify-between text-xs text-brand/70">
+                  <span>Za plačati bungalov</span>
+                  <span className="font-medium text-brand-dark">
+                    {formatEur(selectionEstimate.bungalov)}
+                  </span>
+                </div>
+              )}
               <div className="flex justify-between font-bold text-brand">
                 <span>Skupaj ocena</span>
-                <span className="text-lg">{formatEur(selectionEstimate.total)}</span>
+                <span className="text-lg">
+                  {formatEur(hideBungalov ? selectionEstimate.simuni : selectionEstimate.total)}
+                </span>
               </div>
-              <p className="text-[10px] text-brand/50">
-                Bungalov se deli med vse družine prisotne ta dan.
-              </p>
+              {!hideBungalov && (
+                <p className="text-[10px] text-brand/50">
+                  Bungalov se deli med vse družine prisotne ta dan.
+                </p>
+              )}
             </div>
 
-            {isAdmin && liveEditing && (
+            {isAdmin && editing && (
               <BungalovPaidToggle
-                reservation={liveEditing}
-                onUpdate={(paid) => onUpdateReservationPayment(liveEditing.id, paid)}
+                reservation={editing}
+                onUpdate={(paid) => onUpdateReservationPayment(editing.id, paid)}
               />
             )}
           </CardSection>
@@ -1602,37 +1823,108 @@ export function AvailabilityPage({
           </AlertBox>
         )}
 
-        {isAdmin && editing && (
-          <CardSection shade="medium" className="mt-4 space-y-2 p-3 text-xs text-brand-dark">
-            <p className="font-semibold uppercase tracking-wide text-brand/60">Zgodovina</p>
-            {historyLoading ? (
-              <p className="text-brand/60">Nalagam…</p>
-            ) : historyError ? (
-              <AlertBox>{historyError}</AlertBox>
-            ) : history.length === 0 ? (
-              <p className="text-brand/60">Ni sprememb.</p>
-            ) : (
-              <ul className="max-h-48 space-y-2 overflow-y-auto pr-1">
-                {history.map((entry) => (
-                  <li key={entry.id} className="rounded-lg bg-white p-2 ring-1 ring-brand/10">
-                    <p className="mb-0.5 flex items-center justify-between gap-2 text-[11px] text-brand/50">
-                      <span className="font-medium text-brand-dark">
-                        {entry.actorName}
-                        {entry.actorRole === 'admin' ? ' (admin)' : ''}
-                      </span>
-                      <span className="shrink-0">{formatDateTime(entry.createdAt)}</span>
-                    </p>
-                    {describeHistoryChanges(entry).map((line, index) => (
-                      <p key={index}>{line}</p>
-                    ))}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </CardSection>
-        )}
+        <div className="mt-4">
+          <span className="mb-1.5 block text-sm font-medium text-brand-dark">Online prijava</span>
+          <div className="space-y-2">
+            <Radio
+              name="checkin-mode"
+              checked={checkinMode === 'online'}
+              onChange={() => setCheckinMode('online')}
+              disabled={saving}
+              label="Online prijava"
+              description="Na recepcijo grem samo ob odhodu, da poravnam bivanje v Šimunih."
+            />
+            <Radio
+              name="checkin-mode"
+              checked={checkinMode === 'manual'}
+              onChange={() => setCheckinMode('manual')}
+              disabled={saving}
+              label="Osebna prijava"
+              description="Prijavo in odjavo bom opravil/a sam/a na recepciji."
+            />
+          </div>
+        </div>
 
         {formError && <AlertBox className="mt-3">{formError}</AlertBox>}
+      </Modal>
+
+      <ConfirmModal
+        open={deleteConfirmOpen}
+        title="Izbriši rezervacijo?"
+        destructive
+        busy={saving}
+        confirmLabel="Izbriši"
+        onConfirm={handleDelete}
+        onCancel={() => setDeleteConfirmOpen(false)}
+      >
+        {editing &&
+          `Rezervacija ${editing.ownerName} (${formatDayRange(editing.startDay, editing.endDay)}) bo trajno izbrisana.`}
+      </ConfirmModal>
+
+      <Modal
+        open={historyReservationId !== null}
+        onClose={closeHistoryModal}
+        title={
+          historyReservation
+            ? `Zgodovina – ${formatDayRange(historyReservation.startDay, historyReservation.endDay)}${
+                isAdmin ? ` (${historyReservation.ownerName})` : ''
+              }`
+            : 'Zgodovina'
+        }
+        className="max-w-lg"
+      >
+        {historyLoading ? (
+          <p className="text-sm text-brand/60">Nalagam…</p>
+        ) : historyError ? (
+          <AlertBox>{historyError}</AlertBox>
+        ) : history.length === 0 ? (
+          <p className="text-sm text-brand/60">Ni sprememb.</p>
+        ) : (
+          <ul className="max-h-96 space-y-2 overflow-y-auto pr-1 text-xs text-brand-dark">
+            {history.map((entry) => (
+              <li key={entry.id} className="rounded-lg border border-brand/15 bg-sky/40 p-2.5">
+                <p className="mb-0.5 flex items-center justify-between gap-2 text-[11px] text-brand/50">
+                  <span className="font-medium text-brand-dark">
+                    {entry.actorName}
+                    {entry.actorRole === 'admin' ? ' (admin)' : ''}
+                  </span>
+                  <span className="shrink-0">{formatDateTime(entry.createdAt)}</span>
+                </p>
+                {describeHistoryChanges(entry).map((line, index) => (
+                  <p key={index}>{line}</p>
+                ))}
+                {entry.action === 'email_sent' && entry.changes.subject && entry.changes.body && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setExpandedHistoryEntryId((prev) => (prev === entry.id ? null : entry.id))
+                      }
+                      className="mt-1.5 flex items-center gap-1 font-medium text-brand hover:underline"
+                    >
+                      {expandedHistoryEntryId === entry.id ? (
+                        <ChevronDown size={12} aria-hidden />
+                      ) : (
+                        <ChevronRight size={12} aria-hidden />
+                      )}
+                      {expandedHistoryEntryId === entry.id ? 'Skrij e-pošto' : 'Prikaži e-pošto'}
+                    </button>
+                    {expandedHistoryEntryId === entry.id && (
+                      <div className="mt-1.5 rounded-lg bg-white p-2.5 ring-1 ring-brand/10">
+                        <p className="mb-1 font-semibold text-brand-dark">
+                          {entry.changes.subject}
+                        </p>
+                        <pre className="whitespace-pre-wrap font-sans text-brand-dark/90">
+                          {entry.changes.body}
+                        </pre>
+                      </div>
+                    )}
+                  </>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
       </Modal>
     </div>
   );

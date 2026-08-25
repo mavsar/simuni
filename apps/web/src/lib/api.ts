@@ -1,6 +1,7 @@
 import type { YearSettings } from './pricing';
 import type {
   CreateFamilyInput,
+  EmailTemplate,
   Family,
   LoginResponse,
   ProfileAccountInput,
@@ -16,6 +17,12 @@ import type {
 
 type ReservationsResponse = { reservations: Reservation[] };
 type SettingsResponse = { years: YearSettings[] };
+export type EmailReport = {
+  sent: string[];
+  skippedNoEmail: string[];
+  failed: string[];
+};
+type ConfirmPricesResponse = SettingsResponse & { emailReport: EmailReport };
 type ConfirmPricesInput = {
   snapshots: Array<{ reservationId: number; bungalov: number; simuni: number }>;
 };
@@ -119,12 +126,44 @@ export const api = {
       body: JSON.stringify(settings)
     }),
   confirmPrices: (year: number, input: ConfirmPricesInput) =>
-    request<SettingsResponse>(`/api/settings/${year}/confirm`, {
+    request<ConfirmPricesResponse>(`/api/settings/${year}/confirm`, {
       method: 'POST',
       body: JSON.stringify(input)
     }),
   unlockPrices: (year: number) =>
     request<SettingsResponse>(`/api/settings/${year}/unlock`, { method: 'POST' }),
+
+  // Email templates (admin only)
+  getEmailTemplates: () => request<{ templates: EmailTemplate[] }>('/api/email-templates'),
+  updateEmailTemplate: (
+    type: string,
+    input: { subject: string; body: string; recipient: string; bcc: string }
+  ) =>
+    request<EmailTemplate>(`/api/email-templates/${type}`, {
+      method: 'PUT',
+      body: JSON.stringify(input)
+    }),
+  resetEmailTemplate: (type: string) =>
+    request<EmailTemplate>(`/api/email-templates/${type}/reset`, { method: 'POST' }),
+  sendTestEmail: (
+    type: string,
+    input: {
+      to: string;
+      familyId: number;
+      subject: string;
+      body: string;
+      vars: Record<string, string>;
+    }
+  ) =>
+    request<{ sent: boolean; to: string }>(`/api/email-templates/${type}/test`, {
+      method: 'POST',
+      body: JSON.stringify(input)
+    }),
+  translateEmailTemplate: (type: string, input: { subject: string; body: string }) =>
+    request<{ subject: string; body: string }>(`/api/email-templates/${type}/translate`, {
+      method: 'POST',
+      body: JSON.stringify(input)
+    }),
 
   // Reservations
   getReservations: () => request<ReservationsResponse>('/api/reservations'),
